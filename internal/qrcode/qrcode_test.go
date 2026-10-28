@@ -1,0 +1,52 @@
+package qrcode
+
+import (
+	"image"
+	"image/png"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	goqr "github.com/skip2/go-qrcode"
+)
+
+func TestRender_NotEmpty(t *testing.T) {
+	out, err := Render("hello")
+	if err != nil || strings.Count(out, "\n") < 5 {
+		t.Fatalf("out=%q err=%v", out, err)
+	}
+}
+
+func TestReadFile_RoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "qr.png")
+	if err := goqr.WriteFile("otpauth-migration://offline?data=abc", goqr.Medium, 256, path); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadFile(path)
+	if err != nil || len(got) != 1 || got[0] != "otpauth-migration://offline?data=abc" {
+		t.Fatalf("got=%v err=%v", got, err)
+	}
+}
+
+func TestReadFile_Errors(t *testing.T) {
+	dir := t.TempDir()
+	notImage := filepath.Join(dir, "a.txt")
+	os.WriteFile(notImage, []byte("hi"), 0o600)
+
+	blank := filepath.Join(dir, "blank.png")
+	img := image.NewGray(image.Rect(0, 0, 100, 100))
+	for i := range img.Pix {
+		img.Pix[i] = 255
+	}
+	f, _ := os.Create(blank)
+	png.Encode(f, img)
+	f.Close()
+
+	for _, p := range []string{filepath.Join(dir, "missing.png"), notImage, blank} {
+		_, err := ReadFile(p)
+		if err == nil || !strings.Contains(err.Error(), p) {
+			t.Errorf("%s: err=%v, want error naming the path", p, err)
+		}
+	}
+}
