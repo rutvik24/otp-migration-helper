@@ -28,6 +28,9 @@ Qodana (GoLand) flags these on this repo; do not introduce them.
   - Interface copy: sentence case, active voice, specific buttons ("Copy code", "Copied"), errors say what happened and what to do.
   - Check UI changes in a real browser (Playwright), light and dark and phone width, before claiming they work.
 - **Every platform must compile.** Releases and the container image target amd64, arm64, arm/v7, arm/v6, 386, ppc64le, s390x, riscv64 (plus Windows, macOS, FreeBSD). Keep integer constants and sizes portable (use `int64` for values above 2^31). CI's `cross-build` job checks this.
+- **Database portability.** The vault runs on SQLite, PostgreSQL and MySQL. Write SQL once with `?` placeholders; anything that differs (column types, upsert, insert-if-absent) lives in `internal/store/dialect.go`. Run the store, vault, CLI and web tests against real servers: set `OTPMH_TEST_POSTGRES_URL` / `OTPMH_TEST_MYSQL_URL` and use `go test -p 1 ./...` (the packages share the test databases). CI's `databases` job does this.
+- **The web app never reads server files and never echoes credentials.** SSH keys arrive as text from the browser; no file path from a request is ever opened. Database URLs are shown with `store.Describe`, never raw. Anything that reveals a secret (QR, secret, export) goes through `s.sensitive` so it needs the "confirm it's you" step.
+- **Edit scripts match whole names.** When splicing code with a script, anchor on the full function name (`showRecover(` also matches `showRecoveryCode`). `node --check` every changed web script.
 - **Verify the right CI run.** After pushing, wait for the run whose `headSha` equals `git rev-parse HEAD`; do not trust the latest run in the list.
 
 Before pushing: `go vet ./... && go test ./...` plus the govulncheck command above, all clean.
