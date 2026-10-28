@@ -248,3 +248,110 @@ func TestVaultExport_UnknownFormat(t *testing.T) {
 		t.Error("expected error")
 	}
 }
+
+var recoveryCodeRe = regexp.MustCompile(`([A-Z2-7]{4}-){7}[A-Z2-7]{4}`)
+
+func recoveryCodeIn(t *testing.T, out string) string {
+	t.Helper()
+	code := recoveryCodeRe.FindString(out)
+	if code == "" {
+		t.Fatalf("no recovery code in:\n%s", out)
+	}
+	return code
+}
+
+func recoverErr(path string) error {
+	return run([]string{"vault", "recover", "--unlock", "password", "--vault-path", path}, nil, &strings.Builder{})
+}
+
+func TestRecover_Success(t *testing.T) {
+	path := vaultPath(t)
+	code := recoveryCodeIn(t, initPasswordVault(t, path))
+	scripted(t, pw)
+	runOK(t, "vault", "import", "--vault-path", path, testLink("alice"))
+
+	scripted(t, code, recPass, "new password", "new password", "new-recovery-pass-2", "new-recovery-pass-2")
+	out := runOK(t, "vault", "recover", "--unlock", "password", "--vault-path", path)
+	if newCode := recoveryCodeIn(t, out); newCode == code {
+		t.Error("recovery code was not rotated")
+	}
+
+	scripted(t, "new password")
+	if out := runOK(t, "vault", "list", "--vault-path", path); !strings.Contains(out, "alice") {
+		t.Errorf("accounts lost after recovery: %s", out)
+	}
+	scripted(t, pw)
+	if err := run([]string{"vault", "list", "--vault-path", path}, nil, &strings.Builder{}); err == nil {
+		t.Error("old password still works")
+	}
+}
+
+func TestRecover_OldRecoveryCodeDead(t *testing.T) {
+	path := vaultPath(t)
+	code := recoveryCodeIn(t, initPasswordVault(t, path))
+	scripted(t, code, recPass, pw, pw, "new-recovery-pass-2", "new-recovery-pass-2")
+	runOK(t, "vault", "recover", "--unlock", "password", "--vault-path", path)
+
+	scripted(t, code, recPass, pw, pw, "new-recovery-pass-3", "new-recovery-pass-3")
+	if err := recoverErr(path); err == nil || err.Error() != "recovery failed" {
+		t.Errorf("old code accepted: %v", err)
+	}
+}
+
+func TestRecover_WrongCodeWrongPassphraseSameMessage(t *testing.T) {
+	path := vaultPath(t)
+	code := recoveryCodeIn(t, initPasswordVault(t, path))
+	cases := [][2]string{{"AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA", recPass}, {code, "not-the-passphrase"}, {"BBBB-BBBB-BBBB-BBBB-BBBB-BBBB-BBBB-BBBB", "not-the-passphrase"}}
+	for _, c := range cases {
+		scripted(t, c[0], c[1])
+		if err := recoverErr(path); err == nil || err.Error() != "recovery failed" {
+			t.Errorf("code=%q: err=%v", c[0], err)
+		}
+	}
+}
+
+func TestRecover_LockoutAfterFiveFailures(t *testing.T) {
+	path := vaultPath(t)
+	code := recoveryCodeIn(t, initPasswordVault(t, path))
+	for i := 0; i < 5; i++ {
+		scripted(t, "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA", recPass)
+		if err := recoverErr(path); err == nil {
+			t.Fatal("expected failure")
+		}
+	}
+	scripted(t, code, recPass, pw, pw, "new-recovery-pass-2", "new-recovery-pass-2")
+	if err := recoverErr(path); err == nil || err.Error() != "recovery failed" {
+		t.Errorf("correct secrets accepted while locked: %v", err)
+	}
+}
+
+func TestRecover_NoRecoveryVault(t *testing.T) {
+	path := vaultPath(t)
+	scripted(t, pw, pw)
+	runOK(t, "vault", "init", "--unlock", "password", "--no-recovery", "--vault-path", path)
+	scripted(t, "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA", recPass)
+	if err := recoverErr(path); err == nil || err.Error() != "recovery failed" {
+		t.Errorf("err: %v", err)
+	}
+}
+
+func TestRecover_LogsNoSecrets(t *testing.T) {
+	path := vaultPath(t)
+	code := recoveryCodeIn(t, initPasswordVault(t, path))
+	scripted(t, "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA", recPass)
+	_ = recoverErr(path)
+	scripted(t, code, recPass, "new password", "new password", "new-recovery-pass-2", "new-recovery-pass-2")
+	runOK(t, "vault", "recover", "--unlock", "password", "--vault-path", path)
+
+	out := runOK(t, "vault", "log", "--vault-path", path)
+	for _, secret := range []string{code, recPass, pw, "new password", "new-recovery-pass-2", "AAAA-AAAA"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("log leaks %q:\n%s", secret, out)
+		}
+	}
+	for _, action := range []string{"recovery_failed", "recovery"} {
+		if !strings.Contains(out, action) {
+			t.Errorf("log missing %q:\n%s", action, out)
+		}
+	}
+}
