@@ -18,6 +18,7 @@ func runLive(args []string, stdin io.Reader, out io.Writer) error {
 	fs := flag.NewFlagSet("live", flag.ContinueOnError)
 	fs.SetOutput(out)
 	all := fs.Bool("all", false, "show every account without asking")
+	pick := fs.String("select", "", "choose accounts without the menu: \"all\", numbers (1,3 or 2-4) or names")
 	useVault := fs.Bool("vault", false, "read accounts from the vault and save HOTP counters")
 	vf := addVaultFlags(fs)
 	if err := fs.Parse(args); err != nil {
@@ -25,34 +26,30 @@ func runLive(args []string, stdin io.Reader, out io.Writer) error {
 	}
 
 	if *useVault {
-		return liveFromVault(vf, *all)
+		return liveFromVault(vf, *all, *pick)
 	}
 	accounts, _, err := source.Load(fs.Args(), stdin)
 	if err != nil {
 		return err
 	}
-	if !*all {
-		if accounts, err = tui.Pick(accounts); err != nil {
-			return err
-		}
+	if accounts, err = chooseAccounts(accounts, *all, *pick); err != nil {
+		return err
 	}
 	return tui.Live(accounts, nil)
 }
 
-func liveFromVault(vf *vaultFlags, all bool) error {
+func liveFromVault(vf *vaultFlags, all bool, pick string) error {
 	s, recs, err := vaultAccounts(vf)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = s.Close() }()
 
-	accounts := accountsOf(recs)
-	if !all {
-		if accounts, err = tui.Pick(accounts); err != nil {
-			return err
-		}
-		recs = matching(recs, accounts)
+	accounts, err := chooseAccounts(accountsOf(recs), all, pick)
+	if err != nil {
+		return err
 	}
+	recs = matching(recs, accounts)
 	if err := s.Log("live", fmt.Sprintf("accounts=%d", len(accounts))); err != nil {
 		return err
 	}

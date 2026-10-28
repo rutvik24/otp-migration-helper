@@ -13,14 +13,16 @@ const COPIED_MS = 2000;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 export function showMain(app, { mode, onLocked }) {
-  const state = { accounts: [], selectedId: null, deadline: 0, copiedId: null, refreshing: false };
+  const state = { accounts: [], selectedId: null, deadline: 0, copiedId: null, refreshing: false, filter: "" };
   let copiedTimer = 0;
   let warnTimer = 0;
   let railAnim = null;
   let lastInput = Date.now();
 
   const list = h("ul", { class: "side-list", role: "list", "aria-label": "Accounts" });
-  const side = h("nav", { class: "side", "aria-label": "Accounts" }, list);
+  const search = h("input", { class: "input search", type: "search", placeholder: "Search accounts", "aria-label": "Search accounts", autocomplete: "off", spellcheck: "false" });
+  const hint = h("p", { class: "kbd-hint" }, h("kbd", null, "↑"), " ", h("kbd", null, "↓"), " choose  ", h("kbd", null, "C"), " copy  ", h("kbd", null, "/"), " search");
+  const side = h("nav", { class: "side", "aria-label": "Accounts" }, h("div", { class: "side-tools" }, search, hint), list);
   const focus = h("section", { class: "focus-panel", "aria-label": "Selected account" });
   const railFill = h("i");
   const rail = h("div", { class: "rail", "aria-hidden": "true" }, railFill);
@@ -48,27 +50,46 @@ export function showMain(app, { mode, onLocked }) {
   setChildren(app, h("div", { class: "app" }, bar, h("div", { class: "body" }, side, focus)));
 
   const selected = () => state.accounts.find((a) => a.id === state.selectedId) || null;
+  const visible = () => {
+    const q = state.filter.trim().toLowerCase();
+    return q ? state.accounts.filter((a) => a.label.toLowerCase().includes(q)) : state.accounts;
+  };
 
   // ---------- list ----------
   function renderList() {
+    // Rebuilding the rows drops keyboard focus, so remember where it was.
+    const active = document.activeElement;
+    const row = active && active.closest ? active.closest(".item") : null;
+    const restore = row && list.contains(row) ? { id: row.dataset.id, copy: active.classList.contains("cp") } : null;
+
+    const shown = visible();
     if (state.accounts.length === 0) {
       setChildren(list, h("li", { class: "empty" },
         h("p", null, "No accounts yet."),
         h("button", { class: "btn solid", type: "button", onclick: () => openImport({ onSaved: refresh }) }, "Import accounts")));
       return;
     }
-    setChildren(list, state.accounts.map((a) => {
+    if (shown.length === 0) {
+      setChildren(list, h("li", { class: "empty" }, h("p", null, "No accounts match \u201c" + state.filter.trim() + "\u201d.")));
+      return;
+    }
+    setChildren(list, shown.map((a) => {
       const hotp = a.kind === "hotp";
       const done = state.copiedId === a.id;
       const action = hotp
         ? h("button", { class: "cp", type: "button", "aria-label": "Next code for " + a.label, onclick: () => nextCode(a) }, icon("next"), "Next")
         : h("button", { class: "cp" + (done ? " done" : ""), type: "button", "aria-label": "Copy code for " + a.label, onclick: () => copyCode(a) }, icon(done ? "check" : "copy"), done ? "Copied" : "Copy");
-      return h("li", { class: "item" + (a.id === state.selectedId ? " sel" : "") },
+      return h("li", { class: "item" + (a.id === state.selectedId ? " sel" : ""), "data-id": a.id },
         h("button", { class: "pick", type: "button", "aria-current": a.id === state.selectedId ? "true" : null, onclick: () => select(a.id) },
           h("b", null, a.issuer || a.name),
           h("small", null, groupCode(a.code), hotp ? h("small", { class: "note" }, " counter " + a.counter) : null)),
         action);
     }));
+
+    if (restore) {
+      const el = list.querySelector('[data-id="' + restore.id + '"] ' + (restore.copy ? ".cp" : ".pick"));
+      if (el) el.focus();
+    }
   }
 
   // ---------- focus panel ----------
@@ -124,11 +145,79 @@ export function showMain(app, { mode, onLocked }) {
   }
 
   // ---------- actions ----------
-  function select(id) {
+  function select(id, focusRow) {
     state.selectedId = id;
     renderList();
     renderFocus();
+    if (focusRow) focusSelected();
   }
+
+  function focusSelected() {
+    const pick = list.querySelector('[data-id="' + state.selectedId + '"] .pick');
+    if (pick) pick.focus();
+  }
+
+  // move changes the chosen account by delta rows within what the search shows;
+  // delta can also be "first" or "last".
+  function move(delta) {
+    const shown = visible();
+    if (shown.length === 0) return;
+    const at = shown.findIndex((a) => a.id === state.selectedId);
+    let next;
+    if (delta === "first") next = 0;
+    else if (delta === "last") next = shown.length - 1;
+    else next = Math.min(shown.length - 1, Math.max(0, (at < 0 ? (delta > 0 ? -1 : shown.length) : at) + delta));
+    select(shown[next].id, true);
+  }
+
+  // After the search changes, keep the choice on something that is still shown.
+  function keepChoiceVisible() {
+    const shown = visible();
+    if (!shown.some((a) => a.id === state.selectedId)) state.selectedId = shown.length ? shown[0].id : null;
+  }
+
+  search.addEventListener("input", () => {
+    state.filter = search.value;
+    keepChoiceVisible();
+    renderList();
+    renderFocus();
+  });
+  search.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" || event.key === "Enter") {
+      event.preventDefault();
+      keepChoiceVisible();
+      renderList();
+      renderFocus();
+      focusSelected();
+    } else if (event.key === "Escape" && search.value) {
+      event.preventDefault();
+      search.value = "";
+      state.filter = "";
+      keepChoiceVisible(); // a search with no matches leaves nothing chosen
+      renderList();
+      renderFocus();
+    }
+  });
+
+  // Keys that work anywhere on the page except while typing or in a dialog.
+  function onKey(event) {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const target = event.target;
+    if (target && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)) return;
+    if (document.querySelector("dialog[open]")) return;
+    const a = selected();
+    switch (event.key) {
+      case "ArrowDown": case "j": event.preventDefault(); move(1); break;
+      case "ArrowUp": case "k": event.preventDefault(); move(-1); break;
+      case "Home": event.preventDefault(); move("first"); break;
+      case "End": event.preventDefault(); move("last"); break;
+      case "c": if (a && a.kind !== "hotp") copyCode(a); break;
+      case "n": if (a && a.kind === "hotp") nextCode(a); break;
+      case "/": event.preventDefault(); search.focus(); search.select(); break;
+      default:
+    }
+  }
+  document.addEventListener("keydown", onKey);
 
   async function copyCode(a) {
     if (!(await copyText(a.code))) return;
@@ -167,6 +256,7 @@ export function showMain(app, { mode, onLocked }) {
       state.accounts = data.accounts;
       state.deadline = performance.now() + data.secondsLeft * 1000;
       if (!selected()) state.selectedId = state.accounts.length ? state.accounts[0].id : null;
+      keepChoiceVisible();
       renderList();
       renderFocus();
     } catch (e) {
@@ -291,6 +381,7 @@ export function showMain(app, { mode, onLocked }) {
     if (railAnim) railAnim.cancel();
     for (const type of ["pointerdown", "keydown", "wheel", "touchstart"]) window.removeEventListener(type, markActive);
     document.removeEventListener("visibilitychange", onVisible);
+    document.removeEventListener("keydown", onKey);
   }
 
   refresh();

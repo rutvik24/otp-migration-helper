@@ -25,6 +25,8 @@ Inputs can be QR image paths, or the text a QR code decodes to (an `otpauth-migr
 
     otpmh show --all a.png 'otpauth-migration://offline?data=...' b.png 'otpauth://totp/Acme:me?secret=...'
 
+Choosing accounts: the menu has an **All accounts** row at the top. Move with the arrow keys (or `j`/`k`), press space to tick, `a` for all, `n` for none, and Enter to confirm; Enter on its own takes the highlighted account. Skip the menu with `--all`, or `--select 1,3` / `--select 2-4` / `--select github` (numbers, ranges or names). If the full-screen menu cannot start (an IDE console, no terminal), otpmh asks you to type the choice instead.
+
 Exports with several QR codes: pass every image or text (`otpmh show a.png b.png`). Missing codes are reported. Single-account URIs must use a 30-second period, 6 or 8 digits and SHA1/256/512; anything else is rejected rather than giving wrong codes.
 
 TOTP and HOTP accounts are supported. In `live`, a HOTP code advances only when you press `n`.
@@ -85,6 +87,7 @@ Opens otpmh in your browser at a private local address (only this computer can r
 - Import by dropping QR images, **scanning with your webcam**, or pasting decoded text (`otpauth-migration://` links and `otpauth://` URIs), in any order. Multi-QR exports are merged and missing codes are reported before anything is saved.
 - Show a QR code for another authenticator app, export for Bitwarden or other managers, and see the activity log. Before a QR code, a secret or an export is shown, you confirm your credentials again (good for 2 minutes), so someone at an unlocked screen cannot just read them out.
 - Light, Dark, or System (the default; it follows your operating system).
+- Fully usable from the keyboard: `↑` `↓` (or `j` `k`), `Home` and `End` choose an account, `C` copies its code, `N` shows the next code of a counter-based account, and `/` searches. The shortcuts pause while you type and while a dialog is open.
 
 Nothing is loaded from the internet: fonts, scripts and the QR decoder are all part of the program. Camera access needs `localhost` or HTTPS.
 

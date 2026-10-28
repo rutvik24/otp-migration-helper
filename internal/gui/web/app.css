@@ -227,3 +227,11 @@ table.log td.when { color: var(--ink-2); white-space: nowrap; }
 /* A pasted private key is blurred until the field is focused, so it is not left readable on screen. */
 .keybox textarea.input { filter: blur(4px); transition: filter 0.15s; }
 .keybox textarea.input:focus { filter: none; }
+
+/* ---------- account search and keyboard hints ---------- */
+.side-tools { display: grid; gap: 8px; padding: 14px 18px 10px 22px; }
+.search { padding: 8px 12px; }
+.kbd-hint { margin: 0; font-size: 12px; color: var(--ink-2); }
+kbd { font-family: var(--font-code); font-size: 11px; padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--btn-bg); color: var(--ink); }
+.item .pick:focus-visible { outline-offset: -3px; }
+@media (hover: none) { .kbd-hint { display: none; } }

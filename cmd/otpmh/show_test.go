@@ -72,3 +72,34 @@ func TestScan_UnsupportedOSMessage(t *testing.T) {
 		}
 	}
 }
+
+func TestShow_SelectWithoutTheMenu(t *testing.T) {
+	link := testLink("alice", "bob", "carol")
+	cases := map[string][]string{
+		"2":     {"bob"},
+		"1,3":   {"alice", "carol"},
+		"carol": {"carol"},
+		"1-2":   {"alice", "bob"},
+		"all":   {"alice", "bob", "carol"},
+	}
+	for spec, want := range cases {
+		var out strings.Builder
+		if err := runShow([]string{"--select", spec, link}, nil, &out); err != nil {
+			t.Fatalf("%q: %v", spec, err)
+		}
+		for _, name := range []string{"alice", "bob", "carol"} {
+			shown := strings.Contains(out.String(), "== "+name+" ==")
+			wanted := false
+			for _, w := range want {
+				wanted = wanted || w == name
+			}
+			if shown != wanted {
+				t.Errorf("--select %q: %s shown=%v, want %v", spec, name, shown, wanted)
+			}
+		}
+	}
+	var out strings.Builder
+	if err := runShow([]string{"--select", "9", link}, nil, &out); err == nil {
+		t.Error("an unknown number must be an error")
+	}
+}
