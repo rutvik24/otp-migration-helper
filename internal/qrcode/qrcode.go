@@ -28,7 +28,7 @@ func ReadFile(path string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only file: a close error is not actionable
 
 	img, _, err := image.Decode(f)
 	if err != nil {

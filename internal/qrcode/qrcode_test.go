@@ -32,16 +32,25 @@ func TestReadFile_RoundTrip(t *testing.T) {
 func TestReadFile_Errors(t *testing.T) {
 	dir := t.TempDir()
 	notImage := filepath.Join(dir, "a.txt")
-	os.WriteFile(notImage, []byte("hi"), 0o600)
+	if err := os.WriteFile(notImage, []byte("hi"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	blank := filepath.Join(dir, "blank.png")
 	img := image.NewGray(image.Rect(0, 0, 100, 100))
 	for i := range img.Pix {
 		img.Pix[i] = 255
 	}
-	f, _ := os.Create(blank)
-	png.Encode(f, img)
-	f.Close()
+	f, err := os.Create(blank)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, p := range []string{filepath.Join(dir, "missing.png"), notImage, blank} {
 		_, err := ReadFile(p)

@@ -54,14 +54,17 @@ func tempImage(fill func(path string) error) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	f.Close()
 	path := f.Name()
+	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
 	if err := fill(path); err != nil {
-		os.Remove(path)
+		_ = os.Remove(path)
 		return "", err
 	}
 	if info, err := os.Stat(path); err != nil || info.Size() == 0 {
-		os.Remove(path)
+		_ = os.Remove(path)
 		return "", errors.New("nothing was captured")
 	}
 	return path, nil

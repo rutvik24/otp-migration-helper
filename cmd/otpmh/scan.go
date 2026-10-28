@@ -61,7 +61,7 @@ func scanAll(scan func(macos.Runner) (string, error), in *bufio.Reader, out io.W
 			return nil, err
 		}
 		texts, err := qrcode.ReadFile(path)
-		os.Remove(path)
+		_ = os.Remove(path)
 		if err != nil {
 			return nil, err
 		}

@@ -86,13 +86,13 @@ func (m live) View() string {
 		if i == m.cursor {
 			marker = ">"
 		}
-		fmt.Fprintf(&b, "%s %s\n", marker, account.Label(a))
+		b.WriteString(fmt.Sprintf("%s %s\n", marker, account.Label(a)))
 		if a.Kind == migration.HOTP {
-			fmt.Fprintf(&b, "    %s  counter %d\n\n", otp.HOTP(a.Secret, m.counters[i], a.Digits, a.Algorithm), m.counters[i])
+			b.WriteString(fmt.Sprintf("    %s  counter %d\n\n", otp.HOTP(a.Secret, m.counters[i], a.Digits, a.Algorithm), m.counters[i]))
 			continue
 		}
 		left := otp.SecondsLeft(m.now, period)
-		fmt.Fprintf(&b, "    %s  %2ds %s\n\n", otp.TOTP(a.Secret, m.now, period, a.Digits, a.Algorithm), left, m.bar(left))
+		b.WriteString(fmt.Sprintf("    %s  %2ds %s\n\n", otp.TOTP(a.Secret, m.now, period, a.Digits, a.Algorithm), left, m.bar(left)))
 	}
 	return b.String()
 }

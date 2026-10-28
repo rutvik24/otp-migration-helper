@@ -69,7 +69,7 @@ func (p picker) View() string {
 		if p.selected[i] {
 			mark = "x"
 		}
-		fmt.Fprintf(&b, "%s [%s] %s\n", cursor, mark, account.Label(a))
+		b.WriteString(fmt.Sprintf("%s [%s] %s\n", cursor, mark, account.Label(a)))
 	}
 	return b.String()
 }
