@@ -1,4 +1,5 @@
-otpmh
+/otpmh
 /dist/
 .superpowers/
 .idea/
+qodana.yaml
