@@ -31,11 +31,17 @@ TOTP and HOTP accounts are supported. In `live`, a HOTP code advances only when 
 
 ### macOS scanning
 
-    otpmh scan                      # drag a box around each QR code on screen
-    otpmh scan --method shortcut    # use the Shortcuts app instead
-    otpmh install-shortcuts         # add both shortcuts to the Shortcuts app
+    otpmh scan                       # drag a box around a QR code anywhere on screen
+    otpmh scan --method file         # choose a saved QR image in the Finder
+    otpmh scan --method shortcut     # camera or image file, through the Shortcuts app
+    otpmh install-shortcuts          # add the shortcuts to the Shortcuts app
 
-macOS asks you to click "Add Shortcut" once per shortcut. On other systems pass a QR image path.
+`install-shortcuts` adds two shortcuts (macOS asks you to click "Add Shortcut" for each):
+
+- **OTP Migration Scan** asks whether to scan with the **camera** or **choose an image file** from the Finder. It hands the scanned text, or the chosen image, back to otpmh, which decodes it and carries on. For an export with several QR codes it asks again for each one. The camera step is the same Shortcuts action as Apple's own "Scan QR code".
+- **OTP Migration Capture** opens Terminal and selects a QR code anywhere on screen.
+
+On other systems pass a QR image path, or the decoded text.
 
 ## Encrypted vault
 

@@ -19,28 +19,38 @@ var errMacOnly = errors.New("this command only works on macOS; pass a QR image p
 // supported is replaced in tests.
 var supported = macos.Supported
 
+// scanFunc reads one round of QR codes and returns the text of each.
+type scanFunc func() ([]string, error)
+
 func runScan(args []string, stdin io.Reader, out io.Writer) error {
 	if !supported() {
 		return errMacOnly
 	}
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 	fs.SetOutput(out)
-	method := fs.String("method", "capture", "capture (drag a box on screen) or shortcut (Shortcuts app)")
+	method := fs.String("method", "capture", "capture (drag a box around a QR code on screen), file (choose an image in the Finder), or shortcut (the installed Shortcuts app shortcut: camera or image file)")
 	all := fs.Bool("all", false, "show every account without asking")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	scan := macos.CaptureRegion
+	var scan scanFunc
+	var prompt string
 	switch *method {
 	case "capture":
+		scan, prompt = scanScreenRegion, "Select the QR code on screen..."
+	case "file":
+		scan, prompt = scanChosenFile, "Choose the QR code image..."
 	case "shortcut":
-		scan = macos.RunScanShortcut
+		scan, prompt = scanWithShortcut, "Use the camera or choose an image file..."
 	default:
-		return fmt.Errorf("unknown method %q (use capture or shortcut)", *method)
+		return fmt.Errorf("unknown method %q (use capture, file or shortcut)", *method)
 	}
 
-	links, err := scanAll(scan, bufio.NewReader(stdin), out)
+	links, err := scanAll(func() ([]string, error) {
+		sayln(out, prompt)
+		return scan()
+	}, bufio.NewReader(stdin), out)
 	if err != nil {
 		return err
 	}
@@ -51,17 +61,74 @@ func runScan(args []string, stdin io.Reader, out io.Writer) error {
 	return runShow(showArgs, nil, out)
 }
 
+func scanScreenRegion() ([]string, error) {
+	path, err := macos.CaptureRegion(macos.ExecRunner)
+	if err != nil {
+		return nil, err
+	}
+	texts, err := qrcode.ReadFile(path)
+	_ = os.Remove(path) // a temporary screenshot; failing to delete it changes nothing
+	return texts, err
+}
+
+func scanChosenFile() ([]string, error) {
+	path, err := macos.ChooseImageFile(macos.ExecOutput)
+	if err != nil {
+		return nil, err
+	}
+	return qrcode.ReadFile(path)
+}
+
+func scanWithShortcut() ([]string, error) {
+	text, err := macos.RunScanShortcut(macos.ExecRunner)
+	if err != nil {
+		return nil, err
+	}
+	return interpretShortcutOutput(text)
+}
+
+// interpretShortcutOutput turns what the scan shortcut returned into QR texts.
+// Each line is either scanned QR text (otpauth links) or the path of an image
+// file the user chose in the Finder, which is read for QR codes.
+func interpretShortcutOutput(output string) ([]string, error) {
+	var texts []string
+	seen := map[string]bool{}
+	add := func(t string) {
+		if !seen[t] {
+			seen[t] = true
+			texts = append(texts, t)
+		}
+	}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case line == "":
+		case strings.HasPrefix(line, "otpauth://") || strings.HasPrefix(line, "otpauth-migration://"):
+			add(line)
+		default:
+			if _, err := os.Stat(line); err != nil {
+				return nil, fmt.Errorf("the shortcut returned %.40q, which is not a QR code or an image file", line)
+			}
+			found, err := qrcode.ReadFile(line)
+			if err != nil {
+				return nil, err
+			}
+			for _, t := range found {
+				add(t)
+			}
+		}
+	}
+	if len(texts) == 0 {
+		return nil, errors.New("the shortcut returned no QR codes; the result is not a QR code")
+	}
+	return texts, nil
+}
+
 // scanAll scans QR codes until every code of the export has been read.
-func scanAll(scan func(macos.Runner) (string, error), in *bufio.Reader, out io.Writer) ([]string, error) {
+func scanAll(scan scanFunc, in *bufio.Reader, out io.Writer) ([]string, error) {
 	var links []string
 	for {
-		sayln(out, "Select the QR code on screen...")
-		path, err := scan(macos.ExecRunner)
-		if err != nil {
-			return nil, err
-		}
-		texts, err := qrcode.ReadFile(path)
-		_ = os.Remove(path)
+		texts, err := scan()
 		if err != nil {
 			return nil, err
 		}
@@ -92,5 +159,11 @@ func runInstallShortcuts(out io.Writer) error {
 		return err
 	}
 	sayln(out, "Installing shortcuts. Click \"Add Shortcut\" in each window that opens.")
-	return macos.InstallShortcuts(macos.ExecRunner, exe)
+	if err := macos.InstallShortcuts(macos.ExecRunner, exe); err != nil {
+		return err
+	}
+	sayln(out, "Installed:")
+	say(out, "  %s: scan with the camera or choose an image file in the Finder.\n    Use it with: otpmh scan --method shortcut\n", macos.ScanShortcutName)
+	say(out, "  %s: opens Terminal to select a QR code anywhere on screen.\n", macos.CaptureShortcutName)
+	return nil
 }
