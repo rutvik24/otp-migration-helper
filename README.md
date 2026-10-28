@@ -21,7 +21,11 @@ In Google Authenticator choose *Transfer accounts > Export accounts*. Give `otpm
     otpmh live export.png              # live codes with timers; q quits
     echo 'otpauth-migration://offline?data=...' | otpmh show --all
 
-Exports with several QR codes: pass every image (`otpmh show a.png b.png`). Missing codes are reported.
+Inputs can be QR image paths, or the text a QR code decodes to (an `otpauth-migration://...` export link, or a single-account `otpauth://totp/...` URI), mixed in any order:
+
+    otpmh show --all a.png 'otpauth-migration://offline?data=...' b.png 'otpauth://totp/Acme:me?secret=...'
+
+Exports with several QR codes: pass every image or text (`otpmh show a.png b.png`). Missing codes are reported. Single-account URIs must use a 30-second period, 6 or 8 digits and SHA1/256/512; anything else is rejected rather than giving wrong codes.
 
 TOTP and HOTP accounts are supported. In `live`, a HOTP code advances only when you press `n`.
 
@@ -51,7 +55,7 @@ The vault lives at `<user config dir>/otpmh/vault.db` (override with `--vault-pa
 
 ### Recovery
 
-`vault init` prints a one-time recovery code and asks for a recovery passphrase. Recovery needs both:
+`vault init` prints a one-time recovery code and asks for a recovery passphrase. Recovery needs both. It also rotates the vault's data key and re-encrypts every account, so the old key stops working on the recovered vault:
 
     otpmh vault recover --unlock password
 

@@ -17,19 +17,20 @@ Usage:
   otpmh vault init|import|list|log     encrypted local vault (see README)
   otpmh help
 
-Inputs are otpauth-migration:// links or QR image paths; with none given,
-links are read from stdin, one per line.`
+Inputs can be mixed in any order: QR image paths, decoded QR text
+(otpauth-migration:// links, or otpauth:// URIs for single accounts). With none
+given they are read from stdin, one per line.`
 
 func main() {
 	if err := run(os.Args[1:], os.Stdin, os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		sayln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
 
 func run(args []string, stdin io.Reader, out io.Writer) error {
 	if len(args) == 0 {
-		fmt.Fprintln(out, usage)
+		sayln(out, usage)
 		return nil
 	}
 	switch args[0] {
@@ -44,9 +45,17 @@ func run(args []string, stdin io.Reader, out io.Writer) error {
 	case "vault":
 		return runVault(args[1:], stdin, out)
 	case "help", "-h", "--help":
-		fmt.Fprintln(out, usage)
+		sayln(out, usage)
 		return nil
 	default:
 		return fmt.Errorf("unknown command %q\n\n%s", args[0], usage)
 	}
 }
+
+// say and sayln print status messages. A failed write to the terminal has
+// nowhere better to be reported, so the error is discarded here, once.
+// Output that is the point of a command (secrets, lists, exports) returns
+// its write errors instead.
+func say(w io.Writer, format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
+
+func sayln(w io.Writer, a ...any) { _, _ = fmt.Fprintln(w, a...) }

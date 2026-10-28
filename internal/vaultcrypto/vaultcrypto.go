@@ -236,6 +236,7 @@ func ageEncrypt(plain []byte, r age.Recipient) ([]byte, error) {
 		return nil, err
 	}
 	if _, err := w.Write(plain); err != nil {
+		_ = w.Close()
 		return nil, err
 	}
 	if err := w.Close(); err != nil {

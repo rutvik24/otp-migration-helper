@@ -8,6 +8,9 @@ Qodana (GoLand) flags these on this repo; do not introduce them.
   - Return or `t.Fatal` the error, including `Close`, `Remove`, `WriteFile`, `Encode` and `os.Create`.
   - Where the failure truly cannot matter (cleanup after another error, closing a read-only file), discard it explicitly: `_ = os.Remove(path)`. Never leave it bare.
   - Build strings with `b.WriteString(fmt.Sprintf(...))`, not `fmt.Fprintf(&builder, ...)`.
+  - In `cmd/otpmh`, status messages use `say`/`sayln`. Output that is the point of a command (secrets, lists, exports) returns its write error: `if _, err := fmt.Fprintf(...); err != nil { return err }`.
+  - Check with `go run github.com/kisielk/errcheck@latest ./...`; it must print nothing.
+- **Close every resource on every path (`GoResourceLeak`).** If a write to an `age` writer, file or similar fails, close it before returning the error (`_ = w.Close()`).
 - **Vulnerable dependencies (`VulnerableLibrariesLocal`).**
   - Before committing a dependency change, run `go run golang.org/x/vuln/cmd/govulncheck@latest ./...` and upgrade until it reports none. This includes indirect modules and the Go standard library version in `go.mod`.
   - After `go get`, run `go get <indirect module>@latest` for any flagged indirect module, then `go mod tidy`.

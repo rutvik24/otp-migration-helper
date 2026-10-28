@@ -104,3 +104,51 @@ func TestDecode_Errors(t *testing.T) {
 		}
 	}
 }
+
+func TestDecodeURI_Totp(t *testing.T) {
+	a, err := DecodeURI("otpauth://totp/Acme:me@x.com?secret=gezdgnbvgy3tqojqgezdgnbvgy3tqojq&issuer=Acme&algorithm=SHA256&digits=8&period=30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Issuer != "Acme" || a.Name != "me@x.com" || a.Kind != TOTP || a.Algorithm != otp.SHA256 || a.Digits != 8 || string(a.Secret) != "12345678901234567890" {
+		t.Errorf("unexpected %+v", a)
+	}
+}
+
+func TestDecodeURI_HotpCounterAndDefaults(t *testing.T) {
+	a, err := DecodeURI("otpauth://hotp/me?secret=GEZDGNBVGY3TQOJQ====&counter=7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Kind != HOTP || a.Counter != 7 || a.Name != "me" || a.Issuer != "" || a.Algorithm != otp.SHA1 || a.Digits != 6 {
+		t.Errorf("unexpected %+v", a)
+	}
+}
+
+func TestDecodeURI_IssuerFromLabelEscapedAndSpaced(t *testing.T) {
+	a, err := DecodeURI("otpauth://totp/A%3Acme%20Ltd:j%C3%B6hn%20doe?secret=GEZDGNBV%20GY3TQOJQ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Name != "jöhn doe" || a.Issuer != "A:cme Ltd" {
+		t.Errorf("unexpected %+v", a)
+	}
+}
+
+func TestDecodeURI_Errors(t *testing.T) {
+	cases := map[string]string{
+		"wrong scheme":       "https://example.com",
+		"unknown type":       "otpauth://steam/x?secret=GEZDGNBVGY3TQOJQ",
+		"missing secret":     "otpauth://totp/x",
+		"bad secret":         "otpauth://totp/x?secret=!!!!",
+		"unsupported period": "otpauth://totp/x?secret=GEZDGNBVGY3TQOJQ&period=60",
+		"unsupported digits": "otpauth://totp/x?secret=GEZDGNBVGY3TQOJQ&digits=7",
+		"unsupported algo":   "otpauth://totp/x?secret=GEZDGNBVGY3TQOJQ&algorithm=MD5",
+		"bad counter":        "otpauth://hotp/x?secret=GEZDGNBVGY3TQOJQ&counter=abc",
+	}
+	for name, l := range cases {
+		if _, err := DecodeURI(l); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+}

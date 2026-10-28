@@ -1,4 +1,5 @@
-// Package source gathers accounts from links, QR images or stdin.
+// Package source gathers accounts from migration links, otpauth:// URIs and
+// QR images. Inputs may be mixed in any order.
 package source
 
 import (
@@ -6,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
 
@@ -13,43 +15,75 @@ import (
 	"github.com/rutvik24/otp-migration-helper/internal/qrcode"
 )
 
-const linkPrefix = "otpauth-migration://"
+const (
+	migrationPrefix = "otpauth-migration://"
+	uriPrefix       = "otpauth://"
+)
 
-// Load decodes every input (a migration link or a QR image path). With no
-// inputs it reads one link per line from stdin. Warnings report batches
-// whose QR codes were not all provided.
+// Load turns every input into accounts. An input is a migration link, an
+// otpauth:// URI (both are what a QR code decodes to), or the path of a QR
+// image. With no inputs, the same kinds are read from stdin, one per line.
+// Warnings report batches whose QR codes were not all provided.
 func Load(inputs []string, stdin io.Reader) ([]migration.Account, []string, error) {
-	links, err := collectLinks(inputs, stdin)
+	if len(inputs) == 0 {
+		var err error
+		if inputs, err = readLines(stdin); err != nil {
+			return nil, nil, err
+		}
+	}
+	if len(inputs) == 0 {
+		return nil, nil, errors.New("no migration links, otpauth URIs or QR images provided")
+	}
+
+	texts, err := resolve(inputs)
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(links) == 0 {
-		return nil, nil, errors.New("no migration links or QR images provided")
-	}
 
-	var accounts []migration.Account
-	seen := map[string]bool{}
-	batches := map[int32]*batchState{}
-	for _, l := range links {
-		batch, err := migration.Decode(l)
-		if err != nil {
+	c := collector{seen: map[string]bool{}, batches: map[int32]*batchState{}}
+	for _, text := range texts {
+		if err := c.add(text); err != nil {
 			return nil, nil, err
 		}
-		st := batches[batch.BatchID]
-		if st == nil {
-			st = &batchState{size: batch.Size, indexes: map[int32]bool{}}
-			batches[batch.BatchID] = st
-		}
-		st.indexes[batch.Index] = true
-		for _, a := range batch.Accounts {
-			key := a.Issuer + "\x00" + a.Name + "\x00" + string(a.Secret)
-			if !seen[key] {
-				seen[key] = true
-				accounts = append(accounts, a)
-			}
+	}
+	return c.accounts, missingWarnings(c.batches), nil
+}
+
+func readLines(r io.Reader) ([]string, error) {
+	if r == nil {
+		return nil, nil
+	}
+	var lines []string
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		if line := strings.TrimSpace(sc.Text()); line != "" {
+			lines = append(lines, line)
 		}
 	}
-	return accounts, missingWarnings(batches), nil
+	return lines, sc.Err()
+}
+
+// resolve returns the decoded text of every input: text inputs as they are,
+// image inputs by reading the QR codes in them.
+func resolve(inputs []string) ([]string, error) {
+	var texts []string
+	for _, in := range inputs {
+		in = strings.TrimSpace(in)
+		if strings.HasPrefix(in, migrationPrefix) || strings.HasPrefix(in, uriPrefix) {
+			texts = append(texts, in)
+			continue
+		}
+		if _, err := os.Stat(in); err != nil {
+			return nil, fmt.Errorf("%q is not an otpauth link or an existing QR image file", in)
+		}
+		found, err := qrcode.ReadFile(in)
+		if err != nil {
+			return nil, err
+		}
+		texts = append(texts, found...)
+	}
+	return texts, nil
 }
 
 type batchState struct {
@@ -57,33 +91,47 @@ type batchState struct {
 	indexes map[int32]bool
 }
 
-func collectLinks(inputs []string, stdin io.Reader) ([]string, error) {
-	var links []string
-	if len(inputs) == 0 {
-		if stdin == nil {
-			return nil, nil
-		}
-		sc := bufio.NewScanner(stdin)
-		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		for sc.Scan() {
-			if line := strings.TrimSpace(sc.Text()); line != "" {
-				links = append(links, line)
-			}
-		}
-		return links, sc.Err()
-	}
-	for _, in := range inputs {
-		if strings.HasPrefix(in, linkPrefix) {
-			links = append(links, in)
-			continue
-		}
-		texts, err := qrcode.ReadFile(in)
+type collector struct {
+	accounts []migration.Account
+	seen     map[string]bool
+	batches  map[int32]*batchState
+}
+
+func (c *collector) add(text string) error {
+	text = strings.TrimSpace(text)
+	switch {
+	case strings.HasPrefix(text, migrationPrefix):
+		batch, err := migration.Decode(text)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		links = append(links, texts...)
+		st := c.batches[batch.BatchID]
+		if st == nil {
+			st = &batchState{size: batch.Size, indexes: map[int32]bool{}}
+			c.batches[batch.BatchID] = st
+		}
+		st.indexes[batch.Index] = true
+		for _, a := range batch.Accounts {
+			c.addAccount(a)
+		}
+	case strings.HasPrefix(text, uriPrefix):
+		a, err := migration.DecodeURI(text)
+		if err != nil {
+			return err
+		}
+		c.addAccount(a)
+	default:
+		return fmt.Errorf("unsupported QR code content (not an otpauth link): %.40q", text)
 	}
-	return links, nil
+	return nil
+}
+
+func (c *collector) addAccount(a migration.Account) {
+	key := a.Issuer + "\x00" + a.Name + "\x00" + string(a.Secret)
+	if !c.seen[key] {
+		c.seen[key] = true
+		c.accounts = append(c.accounts, a)
+	}
 }
 
 func missingWarnings(batches map[int32]*batchState) []string {

@@ -115,12 +115,12 @@ func runVaultInit(args []string, out io.Writer) error {
 		return err
 	}
 
-	fmt.Fprintln(out, "Vault created:", path)
+	sayln(out, "Vault created:", path)
 	if recoveryCode != "" {
-		fmt.Fprintf(out, "Recovery code (shown once, store it safely): %s\n", recoveryCode)
-		fmt.Fprintln(out, "Recovery also needs the recovery passphrase you just chose.")
+		say(out, "Recovery code (shown once, store it safely): %s\n", recoveryCode)
+		sayln(out, "Recovery also needs the recovery passphrase you just chose.")
 	} else {
-		fmt.Fprintln(out, noRecoveryWarning)
+		sayln(out, noRecoveryWarning)
 	}
 	return nil
 }
@@ -253,7 +253,7 @@ func runVaultImport(args []string, stdin io.Reader, out io.Writer) error {
 		return err
 	}
 	for _, w := range warnings {
-		fmt.Fprintln(out, "warning:", w)
+		sayln(out, "warning:", w)
 	}
 
 	s, key, err := openVault(f)
@@ -268,7 +268,7 @@ func runVaultImport(args []string, stdin io.Reader, out io.Writer) error {
 	if err := s.Log("import", fmt.Sprintf("added=%d", added)); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "added %d of %d accounts\n", added, len(accounts))
+	say(out, "added %d of %d accounts\n", added, len(accounts))
 	return nil
 }
 
@@ -289,7 +289,9 @@ func runVaultList(args []string, out io.Writer) error {
 		return err
 	}
 	for _, r := range recs {
-		fmt.Fprintf(out, "%d  %s\n", r.ID, account.Label(r.Account))
+		if _, err := fmt.Fprintf(out, "%d  %s\n", r.ID, account.Label(r.Account)); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -316,7 +318,9 @@ func runVaultLog(args []string, out io.Writer) error {
 		return err
 	}
 	for _, e := range logs {
-		fmt.Fprintf(out, "%s  %s  %s\n", e.Time.Format("2006-01-02 15:04:05"), e.Action, e.Detail)
+		if _, err := fmt.Fprintf(out, "%s  %s  %s\n", e.Time.Format("2006-01-02 15:04:05"), e.Action, e.Detail); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -408,7 +412,7 @@ func runVaultExport(args []string, out io.Writer) error {
 		return err
 	}
 	if *outFile != "" {
-		fmt.Fprintf(out, "Wrote %d accounts to %s. The file is unencrypted: delete it after importing.\n", len(accounts), *outFile)
+		say(out, "Wrote %d accounts to %s. The file is unencrypted: delete it after importing.\n", len(accounts), *outFile)
 	}
 	return nil
 }
@@ -512,7 +516,7 @@ func runVaultRecover(args []string, out io.Writer) error {
 	if err := s.Log("recovery", "mode="+*unlock); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "Vault recovered. Your old recovery code no longer works.")
-	fmt.Fprintf(out, "New recovery code (shown once, store it safely): %s\n", newCode)
+	sayln(out, "Vault recovered. Your old recovery code no longer works.")
+	say(out, "New recovery code (shown once, store it safely): %s\n", newCode)
 	return nil
 }

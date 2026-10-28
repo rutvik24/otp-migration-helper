@@ -69,3 +69,61 @@ func TestLoad_DuplicateAccountOnce(t *testing.T) {
 		t.Fatalf("accts=%d err=%v", len(accts), err)
 	}
 }
+
+const soloURI = "otpauth://totp/Solo:solo@x.com?secret=GEZDGNBVGY3TQOJQ&issuer=Solo"
+
+func writeQR(t *testing.T, text string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "q.png")
+	if err := goqr.WriteFile(text, goqr.Medium, 512, path); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestLoad_MixedTextAndImagesAnyOrder(t *testing.T) {
+	inputs := []string{writeQR(t, link(1, 1, 0, "a")), link(2, 1, 0, "b"), soloURI}
+	perms := [][]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}}
+	for _, p := range perms {
+		ordered := []string{inputs[p[0]], inputs[p[1]], inputs[p[2]]}
+		accts, warns, err := Load(ordered, nil)
+		if err != nil || len(accts) != 3 || len(warns) != 0 {
+			t.Errorf("order %v: accts=%d warns=%v err=%v", p, len(accts), warns, err)
+		}
+	}
+}
+
+func TestLoad_BatchSplitAcrossTextAndImage(t *testing.T) {
+	img := writeQR(t, link(5, 2, 0, "a"))
+	text := link(5, 2, 1, "b")
+	for _, inputs := range [][]string{{img, text}, {text, img}} {
+		accts, warns, err := Load(inputs, nil)
+		if err != nil || len(accts) != 2 || len(warns) != 0 {
+			t.Errorf("accts=%d warns=%v err=%v", len(accts), warns, err)
+		}
+	}
+}
+
+func TestLoad_OtpauthURIFromImage(t *testing.T) {
+	accts, _, err := Load([]string{writeQR(t, soloURI)}, nil)
+	if err != nil || len(accts) != 1 || accts[0].Name != "solo@x.com" || accts[0].Issuer != "Solo" {
+		t.Fatalf("accts=%+v err=%v", accts, err)
+	}
+}
+
+func TestLoad_StdinMixedLinesAndPaths(t *testing.T) {
+	in := strings.NewReader(link(1, 1, 0, "a") + "\n" + writeQR(t, link(2, 1, 0, "b")) + "\n  " + soloURI + "  \n")
+	accts, warns, err := Load(nil, in)
+	if err != nil || len(accts) != 3 || len(warns) != 0 {
+		t.Fatalf("accts=%d warns=%v err=%v", len(accts), warns, err)
+	}
+}
+
+func TestLoad_UnsupportedInputs(t *testing.T) {
+	if _, _, err := Load([]string{"hello world"}, nil); err == nil || !strings.Contains(err.Error(), "hello world") {
+		t.Errorf("plain text: %v", err)
+	}
+	if _, _, err := Load([]string{writeQR(t, "just some text")}, nil); err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Errorf("QR with unrelated text: %v", err)
+	}
+}

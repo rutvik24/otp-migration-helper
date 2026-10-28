@@ -41,7 +41,7 @@ func runShow(args []string, stdin io.Reader, out io.Writer) error {
 			return err
 		}
 		for _, w := range warnings {
-			fmt.Fprintln(out, "warning:", w)
+			sayln(out, "warning:", w)
 		}
 	}
 
@@ -57,14 +57,16 @@ func runShow(args []string, stdin io.Reader, out io.Writer) error {
 		}
 	}
 
-	fmt.Fprintln(out, secretWarning)
+	sayln(out, secretWarning)
 	for _, a := range accounts {
 		url := account.URL(a)
 		qr, err := qrcode.Render(url)
 		if err != nil {
 			return fmt.Errorf("%s: %w", account.Label(a), err)
 		}
-		fmt.Fprintf(out, "\n== %s ==\nURL:    %s\nSecret: %s\n%s", account.Label(a), url, account.Base32(a.Secret), qr)
+		if _, err := fmt.Fprintf(out, "\n== %s ==\nURL:    %s\nSecret: %s\n%s", account.Label(a), url, account.Base32(a.Secret), qr); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -55,7 +55,7 @@ func runScan(args []string, stdin io.Reader, out io.Writer) error {
 func scanAll(scan func(macos.Runner) (string, error), in *bufio.Reader, out io.Writer) ([]string, error) {
 	var links []string
 	for {
-		fmt.Fprintln(out, "Select the QR code on screen...")
+		sayln(out, "Select the QR code on screen...")
 		path, err := scan(macos.ExecRunner)
 		if err != nil {
 			return nil, err
@@ -74,8 +74,8 @@ func scanAll(scan func(macos.Runner) (string, error), in *bufio.Reader, out io.W
 		if len(warnings) == 0 {
 			return links, nil
 		}
-		fmt.Fprintln(out, "warning:", strings.Join(warnings, "; "))
-		fmt.Fprint(out, "Press Enter to scan the next QR code, or q to continue with what was read: ")
+		sayln(out, "warning:", strings.Join(warnings, "; "))
+		say(out, "Press Enter to scan the next QR code, or q to continue with what was read: ")
 		line, _ := in.ReadString('\n')
 		if strings.TrimSpace(line) == "q" {
 			return links, nil
@@ -91,6 +91,6 @@ func runInstallShortcuts(out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "Installing shortcuts. Click \"Add Shortcut\" in each window that opens.")
+	sayln(out, "Installing shortcuts. Click \"Add Shortcut\" in each window that opens.")
 	return macos.InstallShortcuts(macos.ExecRunner, exe)
 }
