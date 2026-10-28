@@ -15,6 +15,7 @@ Usage:
   otpmh scan [--method capture|shortcut] [--all]   macOS: scan QR codes from the screen
   otpmh install-shortcuts               macOS: add scanning shortcuts to the Shortcuts app
   otpmh vault init|import|list|log     encrypted local vault (see README)
+  otpmh gui [--no-open] [--listen ADDR]  open the app in your browser (see README for Docker)
   otpmh help
 
 Inputs can be mixed in any order: QR image paths, decoded QR text
@@ -44,6 +45,10 @@ func run(args []string, stdin io.Reader, out io.Writer) error {
 		return runInstallShortcuts(out)
 	case "vault":
 		return runVault(args[1:], stdin, out)
+	case "gui":
+		return runGui(args[1:], stdin, out)
+	case "healthcheck":
+		return runHealthcheck(args[1:], os.Getenv, out)
 	case "help", "-h", "--help":
 		sayln(out, usage)
 		return nil

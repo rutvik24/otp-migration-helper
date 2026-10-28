@@ -62,12 +62,15 @@ func launch(t *testing.T, s *Server) *http.Cookie {
 func TestHost_WrongHostRejected(t *testing.T) {
 	s := newLocal(t)
 	for _, host := range []string{"evil.example", "evil.example:4040", "127.0.0.1:9999"} {
-		if rec := do(s, "GET", "/healthz", host, nil); rec.Code != http.StatusForbidden {
+		if rec := do(s, "GET", "/", host, nil); rec.Code != http.StatusForbidden {
 			t.Errorf("host %q: status %d, want 403", host, rec.Code)
 		}
 	}
-	if rec := do(s, "GET", "/healthz", "localhost:4040", nil); rec.Code != http.StatusOK {
+	if rec := do(s, "GET", "/", "localhost:4040", nil); rec.Code != http.StatusOK {
 		t.Errorf("localhost: status %d", rec.Code)
+	}
+	if rec := do(s, "GET", "/healthz", "anything.example", nil); rec.Code != http.StatusOK {
+		t.Errorf("healthz should answer for any host: %d", rec.Code)
 	}
 }
 
@@ -144,13 +147,13 @@ func TestRemote_AllowedHosts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec := do(s, "GET", "/healthz", "otp.example.com", nil); rec.Code != http.StatusOK {
+	if rec := do(s, "GET", "/", "otp.example.com", nil); rec.Code != http.StatusOK {
 		t.Errorf("allowed host: %d", rec.Code)
 	}
-	if rec := do(s, "GET", "/healthz", "otp.example.com:8443", nil); rec.Code != http.StatusOK {
+	if rec := do(s, "GET", "/", "otp.example.com:8443", nil); rec.Code != http.StatusOK {
 		t.Errorf("allowed host with port: %d", rec.Code)
 	}
-	if rec := do(s, "GET", "/healthz", "evil.example", nil); rec.Code != http.StatusForbidden {
+	if rec := do(s, "GET", "/", "evil.example", nil); rec.Code != http.StatusForbidden {
 		t.Errorf("other host: %d", rec.Code)
 	}
 }

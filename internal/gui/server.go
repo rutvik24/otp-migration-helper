@@ -109,9 +109,6 @@ func (s *Server) SetupCode() string { return s.setupCode }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("ok\n")) // a failed write to the client has no recovery
-	})
 	s.registerAPI(mux)
 
 	web, err := fs.Sub(webFiles, "web")
@@ -121,7 +118,15 @@ func (s *Server) Handler() http.Handler {
 	files := http.FileServer(http.FS(web))
 	mux.Handle("/", s.launch(files))
 
-	return securityHeaders(s.checkHost(mux))
+	guarded := s.checkHost(mux)
+	return securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The health check answers for any Host: the container probes itself by address.
+		if r.URL.Path == "/healthz" && r.Method == http.MethodGet {
+			_, _ = w.Write([]byte("ok\n")) // a failed write to the client has no recovery
+			return
+		}
+		guarded.ServeHTTP(w, r)
+	}))
 }
 
 // launch swaps the one-time token in the launch link for the session cookie.
