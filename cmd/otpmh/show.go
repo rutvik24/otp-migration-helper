@@ -26,6 +26,27 @@ func chooseAccounts(accounts []migration.Account, all bool, spec string) ([]migr
 	return tui.Pick(accounts)
 }
 
+// loadAccounts reads accounts from the vault (asking for its credentials) or
+// from links, images and text. When it opened the vault it returns it so the
+// caller can log; closeVault is always safe to call.
+func loadAccounts(inputs []string, stdin io.Reader, out io.Writer, useVault bool, vf *vaultFlags) ([]migration.Account, *store.Store, func(), error) {
+	if useVault {
+		s, recs, err := vaultAccounts(vf)
+		if err != nil {
+			return nil, nil, func() {}, err
+		}
+		return accountsOf(recs), s, func() { _ = s.Close() }, nil
+	}
+	accounts, warnings, err := source.Load(inputs, stdin)
+	if err != nil {
+		return nil, nil, func() {}, err
+	}
+	for _, w := range warnings {
+		sayln(out, "warning:", w)
+	}
+	return accounts, nil, func() {}, nil
+}
+
 func runShow(args []string, stdin io.Reader, out io.Writer) error {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
 	fs.SetOutput(out)
@@ -37,27 +58,12 @@ func runShow(args []string, stdin io.Reader, out io.Writer) error {
 		return err
 	}
 
-	var accounts []migration.Account
-	var vault *store.Store
-	if *useVault {
-		s, recs, err := vaultAccounts(vf)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = s.Close() }()
-		vault, accounts = s, accountsOf(recs)
-	} else {
-		var warnings []string
-		var err error
-		if accounts, warnings, err = source.Load(fs.Args(), stdin); err != nil {
-			return err
-		}
-		for _, w := range warnings {
-			sayln(out, "warning:", w)
-		}
+	accounts, vault, closeVault, err := loadAccounts(fs.Args(), stdin, out, *useVault, vf)
+	if err != nil {
+		return err
 	}
+	defer closeVault()
 
-	var err error
 	if accounts, err = chooseAccounts(accounts, *all, *pick); err != nil {
 		return err
 	}

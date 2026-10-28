@@ -21,7 +21,9 @@ import (
 	"golang.org/x/crypto/ssh"
 	"google.golang.org/protobuf/encoding/protowire"
 
+	"github.com/rutvik24/otp-migration-helper/internal/migration"
 	"github.com/rutvik24/otp-migration-helper/internal/qrcode"
+	"github.com/rutvik24/otp-migration-helper/internal/source"
 	"github.com/rutvik24/otp-migration-helper/internal/store"
 )
 
@@ -581,5 +583,106 @@ func TestFlow_OnServerDatabases(t *testing.T) {
 				t.Errorf("export: %d %s", rec.Code, rec.Body.String())
 			}
 		})
+	}
+}
+
+const thirdURI = "otpauth://totp/Proton:rutvik@proton.me?secret=KRSXG5CTMVRXEZLU&issuer=Proton"
+
+type migrationCodes struct {
+	Total int `json:"total"`
+	Codes []struct {
+		Index    int    `json:"index"`
+		Accounts int    `json:"accounts"`
+		PNG      string `json:"png"`
+	} `json:"codes"`
+}
+
+func (c *client) migrationQR(body map[string]any) (int, migrationCodes) {
+	c.t.Helper()
+	rec := c.req("POST", "/api/migration-qr", body)
+	var out migrationCodes
+	if rec.Code == 200 {
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			c.t.Fatalf("bad JSON: %v", err)
+		}
+	}
+	return rec.Code, out
+}
+
+func TestMigrationQR_NeedsConfirmationThenReturnsCodesTheAppCanReadBack(t *testing.T) {
+	c := newClient(t)
+	c.createAndUnlock()
+	c.commit(totpURI, hotpURI, thirdURI)
+
+	if code, _ := c.migrationQR(map[string]any{}); code != http.StatusForbidden {
+		t.Fatalf("without confirming: %d, want 403", code)
+	}
+	c.verify()
+	code, out := c.migrationQR(map[string]any{"perQR": 2})
+	if code != 200 || out.Total != 2 || len(out.Codes) != 2 || out.Codes[0].Accounts != 2 || out.Codes[1].Accounts != 1 {
+		t.Fatalf("code=%d out=%+v", code, out)
+	}
+
+	// Read every returned image like another phone would, and import it.
+	var texts []string
+	for _, qr := range out.Codes {
+		raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(qr.PNG, "data:image/png;base64,"))
+		if err != nil {
+			t.Fatalf("not a PNG data URL: %v", err)
+		}
+		found, err := qrcode.Read(bytes.NewReader(raw), "code.png")
+		if err != nil {
+			t.Fatalf("code %d is not readable: %v", qr.Index, err)
+		}
+		texts = append(texts, found...)
+	}
+	accounts, warnings, err := source.Preview(texts)
+	if err != nil || len(accounts) != 3 || len(warnings) != 0 {
+		t.Fatalf("read back: accounts=%d warnings=%v err=%v", len(accounts), warnings, err)
+	}
+	var hotp bool
+	for _, a := range accounts {
+		if a.Kind == migration.HOTP && a.Counter == 4 {
+			hotp = true
+		}
+	}
+	if !hotp {
+		t.Error("the counter-based account must keep its counter")
+	}
+	if log := c.req("GET", "/api/log", nil).Body.String(); !strings.Contains(log, "export_qr") {
+		t.Errorf("showing import codes must be logged: %s", log)
+	}
+}
+
+func TestMigrationQR_OnlyTheChosenAccounts(t *testing.T) {
+	c := newClient(t)
+	c.createAndUnlock()
+	c.commit(totpURI, hotpURI)
+	c.verify()
+	_, codes := c.json("GET", "/api/codes", nil)
+	first := accountsOf(codes)[0]["id"]
+	code, out := c.migrationQR(map[string]any{"ids": []any{first}})
+	if code != 200 || len(out.Codes) != 1 || out.Codes[0].Accounts != 1 {
+		t.Errorf("code=%d out=%+v", code, out)
+	}
+}
+
+func TestMigrationQR_RejectsBadInput(t *testing.T) {
+	c := newClient(t)
+	c.createAndUnlock()
+	c.commit(totpURI)
+	c.verify()
+	for name, body := range map[string]map[string]any{
+		"too many per code": {"perQR": 11},
+		"negative":          {"perQR": -1},
+		"unknown account":   {"ids": []any{9999}},
+	} {
+		if code, _ := c.migrationQR(body); code != http.StatusBadRequest {
+			t.Errorf("%s: %d, want 400", name, code)
+		}
+	}
+	c.json("POST", "/api/lock", nil)
+	if code, _ := c.migrationQR(map[string]any{}); code != http.StatusUnauthorized {
+		t.Errorf("locked: %d, want 401", code)
 	}
 }

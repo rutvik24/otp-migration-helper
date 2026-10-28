@@ -301,17 +301,20 @@ export function showMain(app, { mode, onLocked }) {
   }
 
   const EXPORTS = [
-    ["bitwarden", "Bitwarden (JSON)"],
-    ["passwords-csv", "Passwords app and other CSV importers"],
-    ["otpauth", "Plain otpauth:// list"],
+    ["bitwarden", "Bitwarden and Proton Pass (JSON)"],
+    ["passwords-csv", "Apple Passwords and other CSV importers"],
+    ["otpauth", "Plain otpauth:// list (Ente Auth, Aegis, FreeOTP+, others)"],
+    ["aegis", "Aegis (JSON)"],
+    ["andotp", "andOTP (JSON)"],
   ];
 
   function openExport() {
-    const name = "fmt-" + Math.random().toString(36).slice(2, 7);
+    const rand = Math.random().toString(36).slice(2, 7);
     const chosen = { value: "bitwarden" };
     const understand = h("input", { type: "checkbox", id: "understand" });
     const go = h("button", { class: "btn solid big", type: "button", disabled: true }, "Download");
     const error = h("p", { class: "error", role: "alert", hidden: true });
+    const showError = (message) => { error.textContent = message; error.hidden = false; };
     understand.addEventListener("change", () => { go.disabled = !understand.checked; });
     go.addEventListener("click", async () => {
       error.hidden = true;
@@ -323,14 +326,37 @@ export function showMain(app, { mode, onLocked }) {
         link.remove();
         announce("Export downloaded");
       } catch (e) {
-        error.textContent = e.message;
-        error.hidden = false;
+        showError(e.message);
       }
     });
     const options = EXPORTS.map(([value, label]) =>
-      h("label", null, h("input", { type: "radio", name, value, checked: value === chosen.value, onchange: () => { chosen.value = value; } }), h("span", null, label)));
-    openDialog("Export accounts", h("div", null,
-      h("p", { class: "hint" }, "Download your accounts to import them into a password manager."),
+      h("label", null, h("input", { type: "radio", name: "fmt-" + rand, value, checked: value === chosen.value, onchange: () => { chosen.value = value; } }), h("span", null, label)));
+
+    // QR codes that another authenticator app can scan to import the accounts.
+    const current = selected();
+    const scope = { ids: [] }; // empty means every account
+    const scopeOptions = [
+      h("label", null, h("input", { type: "radio", name: "scope-" + rand, checked: true, onchange: () => { scope.ids = []; } }), h("span", null, "All accounts")),
+    ];
+    if (current) {
+      scopeOptions.push(h("label", null, h("input", { type: "radio", name: "scope-" + rand, onchange: () => { scope.ids = [current.id]; } }), h("span", null, "Only " + (current.issuer || current.name))));
+    }
+    const showCodes = h("button", { class: "btn solid", type: "button" }, "Show QR codes");
+    showCodes.addEventListener("click", async () => {
+      error.hidden = true;
+      const problem = await openImportCodes(scope.ids);
+      if (problem) showError(problem);
+      else dlg.close();
+    });
+
+    const dlg = openDialog("Export accounts", h("div", null,
+      h("h3", { class: "sub" }, "Scan with another authenticator app"),
+      h("p", { class: "hint" }, "Shows Google Authenticator import QR codes. Google Authenticator, Aegis, 2FAS, Ente Auth, FreeOTP+ and many other apps can scan them."),
+      h("fieldset", null, h("legend", null, "Accounts"), h("div", { class: "seg" }, scopeOptions)),
+      h("div", { class: "actions" }, showCodes),
+      h("hr"),
+      h("h3", { class: "sub" }, "Download a file"),
+      h("p", { class: "hint" }, "For a password manager or an authenticator that imports files."),
       h("fieldset", null, h("legend", null, "Format"), h("div", { class: "seg" }, options)),
       h("p", { class: "notice" }, "This file is not encrypted. Anyone who gets it can create your codes. Delete it after importing."),
       h("div", { class: "check" }, understand, h("label", { for: "understand" }, "I understand the file is not encrypted.")),
@@ -338,14 +364,55 @@ export function showMain(app, { mode, onLocked }) {
       h("div", { class: "actions" }, go)));
   }
 
+  // openImportCodes shows Google Authenticator import QR codes one at a time.
+  // It returns null when they are showing, or a message saying why not.
+  async function openImportCodes(ids) {
+    let data;
+    try {
+      data = await withVerification(mode, () => api.post("/api/migration-qr", { ids }));
+    } catch (e) {
+      return e.message;
+    }
+    let at = 0;
+    const img = h("img", { width: "320", height: "320", alt: "" });
+    const caption = h("p", { class: "qr-caption", "aria-live": "polite" });
+    const prev = h("button", { class: "btn", type: "button" }, "Previous QR code");
+    const next = h("button", { class: "btn solid", type: "button" }, "Next QR code");
+    function render() {
+      const code = data.codes[at];
+      img.src = code.png;
+      img.alt = "QR code " + code.index + " of " + data.total;
+      caption.textContent = "QR code " + code.index + " of " + data.total + " (" + code.accounts + (code.accounts === 1 ? " account)" : " accounts)");
+      prev.disabled = at === 0;
+      next.disabled = at === data.total - 1;
+    }
+    prev.addEventListener("click", () => { if (at > 0) { at--; render(); } });
+    next.addEventListener("click", () => { if (at < data.total - 1) { at++; render(); } });
+
+    const dlg = openDialog("Import into another app", h("div", null,
+      h("p", { class: "hint" }, "In Google Authenticator, open the menu, choose Transfer accounts, then Import accounts, and scan "
+        + (data.total > 1 ? "each code in order. " : "this code. ") + "Other apps have the same option under Import."),
+      h("div", { class: "qr-box" }, img),
+      caption,
+      data.total > 1 ? h("div", { class: "actions center" }, prev, next) : null,
+      h("p", { class: "notice" }, "Anyone who can see these codes can create your codes. Close this when you are done.")),
+      { onClose: () => img.removeAttribute("src") });
+    dlg.el.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowRight") next.click();
+      if (event.key === "ArrowLeft") prev.click();
+    });
+    render();
+    return null;
+  }
+
   function fileName(format) {
-    return { bitwarden: "otpmh-bitwarden.json", "passwords-csv": "otpmh-passwords.csv", otpauth: "otpmh-otpauth.txt" }[format];
+    return { bitwarden: "otpmh-bitwarden.json", "passwords-csv": "otpmh-passwords.csv", otpauth: "otpmh-otpauth.txt", aegis: "otpmh-aegis.json", andotp: "otpmh-andotp.json" }[format];
   }
 
   const ACTION_LABELS = {
     create: "Vault created", unlock: "Unlocked", unlock_failed: "Unlock failed", import: "Accounts imported",
     export: "Accounts exported", show_qr: "QR code shown", reveal: "Secret shown", recovery: "Vault recovered",
-    recovery_failed: "Recovery failed", recovery_blocked: "Recovery blocked", show: "Accounts shown", live: "Live codes opened",
+    export_qr: "Import QR codes shown", verify: "Identity confirmed", verify_failed: "Confirmation failed", recovery_failed: "Recovery failed", recovery_blocked: "Recovery blocked", show: "Accounts shown", live: "Live codes opened",
   };
 
   async function openActivity() {

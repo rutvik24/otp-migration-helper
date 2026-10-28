@@ -366,7 +366,7 @@ func runVaultExport(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("vault export", flag.ContinueOnError)
 	fs.SetOutput(out)
 	f := addVaultFlags(fs)
-	format := fs.String("format", "", "bitwarden, passwords-csv or otpauth")
+	format := fs.String("format", "", "bitwarden, passwords-csv, otpauth, aegis or andotp (for Google Authenticator QR codes use otpmh qr)")
 	yes := fs.Bool("yes", false, "confirm writing unencrypted secrets")
 	outFile := fs.String("out", "", "write to this new file instead of the terminal")
 	if err := fs.Parse(args); err != nil {

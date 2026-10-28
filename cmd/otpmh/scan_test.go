@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -91,3 +92,5 @@ func TestScanAll_CanContinueWithWhatWasRead(t *testing.T) {
 		t.Fatalf("links=%d err=%v", len(links), err)
 	}
 }
+
+func isWindows() bool { return runtime.GOOS == "windows" }

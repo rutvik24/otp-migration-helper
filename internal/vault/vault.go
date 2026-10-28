@@ -210,7 +210,11 @@ func (s *Session) Export(format string) ([]byte, error) {
 	return data, s.store.Log("export", fmt.Sprintf("format=%s accounts=%d", format, len(accounts)))
 }
 
-// Export formats accounts for a password manager: bitwarden, passwords-csv or otpauth.
+// ExportFormats lists the file formats Export knows, for messages.
+const ExportFormats = "bitwarden, passwords-csv, otpauth, aegis or andotp"
+
+// Export formats accounts for another app's import: bitwarden, passwords-csv,
+// otpauth, aegis or andotp.
 func Export(format string, accounts []migration.Account) ([]byte, error) {
 	switch format {
 	case "bitwarden":
@@ -219,8 +223,12 @@ func Export(format string, accounts []migration.Account) ([]byte, error) {
 		return export.PasswordsCSV(accounts)
 	case "otpauth":
 		return export.OTPAuthList(accounts), nil
+	case "aegis":
+		return export.Aegis(accounts)
+	case "andotp":
+		return export.AndOTP(accounts)
 	}
-	return nil, errors.New("format must be bitwarden, passwords-csv or otpauth")
+	return nil, errors.New("format must be " + ExportFormats)
 }
 
 // Logs returns the activity log; it holds no secrets, so it needs no unlock.

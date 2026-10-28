@@ -15,6 +15,7 @@ Usage:
   otpmh scan [--method capture|file|shortcut] [--all]   macOS: scan on screen, from a Finder file, or via the shortcut
   otpmh install-shortcuts               macOS: add scanning shortcuts to the Shortcuts app
   otpmh vault init|import|list|log     encrypted local vault (see README)
+  otpmh qr [--vault] [--all|--select S] [--per-qr N] [--png-dir D]   make Google Authenticator import QR codes
   otpmh gui [--no-open] [--listen ADDR]  open the app in your browser (see README for Docker)
   otpmh help
 
@@ -43,6 +44,8 @@ func run(args []string, stdin io.Reader, out io.Writer) error {
 		return runScan(args[1:], stdin, out)
 	case "install-shortcuts":
 		return runInstallShortcuts(out)
+	case "qr":
+		return runQR(args[1:], stdin, out)
 	case "vault":
 		return runVault(args[1:], stdin, out)
 	case "gui":

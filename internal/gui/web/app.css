@@ -192,7 +192,7 @@ dialog::backdrop { background: rgba(8, 12, 40, 0.6); }
 .dlg-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .dlg-head h2 { font-size: 22px; letter-spacing: -0.01em; }
 .qr-box { display: grid; place-items: center; margin-top: 18px; }
-.qr-box img { width: min(300px, 100%); aspect-ratio: 1; background: #fff; padding: 14px; border-radius: 14px; border: 1px solid var(--line); }
+.qr-box img { width: min(300px, 100%); height: auto; aspect-ratio: 1; background: #fff; padding: 14px; border-radius: 14px; border: 1px solid var(--line); }
 .mono-val { font-family: var(--font-code); font-size: 13px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--btn-bg); overflow-wrap: anywhere; }
 .drop {
   margin-top: 16px; padding: 22px; text-align: center; border: 2px dashed var(--line); border-radius: 14px; color: var(--ink-2);
@@ -235,3 +235,9 @@ table.log td.when { color: var(--ink-2); white-space: nowrap; }
 kbd { font-family: var(--font-code); font-size: 11px; padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--btn-bg); color: var(--ink); }
 .item .pick:focus-visible { outline-offset: -3px; }
 @media (hover: none) { .kbd-hint { display: none; } }
+
+/* ---------- import QR codes for another app ---------- */
+.qr-caption { text-align: center; font-weight: 600; margin: 12px 0 0; }
+.actions.center { justify-content: center; }
+dialog hr { border: 0; border-top: 1px solid var(--line); margin: 22px 0 6px; }
+dialog h3.sub { font-size: 17px; margin: 16px 0 0; }

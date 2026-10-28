@@ -369,3 +369,22 @@ func TestLifecycle_OnServerDatabases(t *testing.T) {
 		})
 	}
 }
+
+func TestExport_OtherAppFormats(t *testing.T) {
+	path := vaultPath(t)
+	createPassword(t, path)
+	s, err := Open(path, Creds{Password: pw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	if _, err := s.Import([]migration.Account{account("a")}); err != nil {
+		t.Fatal(err)
+	}
+	for format, want := range map[string]string{"aegis": `"issuer": "Acme"`, "andotp": `"label": "a"`} {
+		data, err := s.Export(format)
+		if err != nil || !strings.Contains(string(data), want) || !strings.Contains(string(data), "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ") {
+			t.Errorf("%s: err=%v\n%s", format, err, data)
+		}
+	}
+}

@@ -4,8 +4,10 @@ package export
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/rutvik24/otp-migration-helper/internal/account"
@@ -67,4 +69,104 @@ func OTPAuthList(accts []migration.Account) []byte {
 		urls[i] = account.URL(a)
 	}
 	return []byte(strings.Join(urls, "\n") + "\n")
+}
+
+const defaultPeriod = 30
+
+func kindName(a migration.Account) string {
+	if a.Kind == migration.HOTP {
+		return "hotp"
+	}
+	return "totp"
+}
+
+func newUUID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	b[6] = b[6]&0x0f | 0x40 // version 4
+	b[8] = b[8]&0x3f | 0x80 // variant
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
+}
+
+type aegisInfo struct {
+	Secret  string  `json:"secret"`
+	Algo    string  `json:"algo"`
+	Digits  int     `json:"digits"`
+	Period  int     `json:"period,omitempty"`
+	Counter *uint64 `json:"counter,omitempty"`
+}
+
+type aegisEntry struct {
+	Type     string    `json:"type"`
+	UUID     string    `json:"uuid"`
+	Name     string    `json:"name"`
+	Issuer   string    `json:"issuer"`
+	Note     string    `json:"note"`
+	Favorite bool      `json:"favorite"`
+	Icon     any       `json:"icon"`
+	Info     aegisInfo `json:"info"`
+	Groups   []string  `json:"groups"`
+}
+
+// Aegis returns Aegis Authenticator's plain (unencrypted) JSON export, which
+// Aegis, Ente Auth, 2FAS and other apps can import.
+func Aegis(accts []migration.Account) ([]byte, error) {
+	entries := make([]aegisEntry, len(accts))
+	for i, a := range accts {
+		id, err := newUUID()
+		if err != nil {
+			return nil, err
+		}
+		info := aegisInfo{Secret: account.Base32(a.Secret), Algo: a.Algorithm.Name(), Digits: a.Digits}
+		if a.Kind == migration.HOTP {
+			counter := a.Counter
+			info.Counter = &counter
+		} else {
+			info.Period = defaultPeriod
+		}
+		entries[i] = aegisEntry{Type: kindName(a), UUID: id, Name: a.Name, Issuer: a.Issuer, Info: info, Groups: []string{}}
+	}
+	doc := map[string]any{
+		"version": 1,
+		"header":  map[string]any{"slots": nil, "params": nil},
+		"db":      map[string]any{"version": 3, "entries": entries, "groups": []any{}, "icons_optimized": true},
+	}
+	return json.MarshalIndent(doc, "", "  ")
+}
+
+type andOTPEntry struct {
+	Secret        string   `json:"secret"`
+	Issuer        string   `json:"issuer"`
+	Label         string   `json:"label"`
+	Digits        int      `json:"digits"`
+	Type          string   `json:"type"`
+	Algorithm     string   `json:"algorithm"`
+	Thumbnail     string   `json:"thumbnail"`
+	LastUsed      int64    `json:"last_used"`
+	UsedFrequency int      `json:"used_frequency"`
+	Period        int      `json:"period,omitempty"`
+	Counter       *uint64  `json:"counter,omitempty"`
+	Tags          []string `json:"tags"`
+}
+
+// AndOTP returns andOTP's plain (unencrypted) JSON backup format, which
+// andOTP, Aegis and other apps can import.
+func AndOTP(accts []migration.Account) ([]byte, error) {
+	entries := make([]andOTPEntry, len(accts))
+	for i, a := range accts {
+		e := andOTPEntry{
+			Secret: account.Base32(a.Secret), Issuer: a.Issuer, Label: a.Name, Digits: a.Digits,
+			Type: strings.ToUpper(kindName(a)), Algorithm: a.Algorithm.Name(), Thumbnail: "Default", Tags: []string{},
+		}
+		if a.Kind == migration.HOTP {
+			counter := a.Counter
+			e.Counter = &counter
+		} else {
+			e.Period = defaultPeriod
+		}
+		entries[i] = e
+	}
+	return json.MarshalIndent(entries, "", "  ")
 }

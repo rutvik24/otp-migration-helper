@@ -2,6 +2,7 @@ package gui
 
 import (
 	"crypto/subtle"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -46,6 +47,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.Handle("POST /api/import/preview", s.authed(s.handlePreview))
 	mux.Handle("POST /api/import/commit", s.authed(s.handleCommit))
 	mux.Handle("POST /api/export", s.sensitive(s.handleExport))
+	mux.Handle("POST /api/migration-qr", s.sensitive(s.handleMigrationQR))
 	mux.Handle("GET /api/log", s.authed(s.handleLog))
 }
 
@@ -437,6 +439,8 @@ var exportFiles = map[string]string{
 	"bitwarden":     "otpmh-bitwarden.json",
 	"passwords-csv": "otpmh-passwords.csv",
 	"otpauth":       "otpmh-otpauth.txt",
+	"aegis":         "otpmh-aegis.json",
+	"andotp":        "otpmh-andotp.json",
 }
 
 func (s *Server) handleExport(w http.ResponseWriter, r *http.Request, v *vault.Session) {
@@ -449,7 +453,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request, v *vault.S
 	}
 	name, ok := exportFiles[b.Format]
 	if !ok {
-		writeError(w, http.StatusBadRequest, "Choose an export format: Bitwarden, Passwords app CSV, or otpauth list.")
+		writeError(w, http.StatusBadRequest, "Choose an export format.")
 		return
 	}
 	if !b.Confirm {
@@ -477,4 +481,97 @@ func (s *Server) handleLog(w http.ResponseWriter, r *http.Request, v *vault.Sess
 		entries[i] = map[string]string{"time": e.Time.Format(time.RFC3339), "action": e.Action, "detail": e.Detail}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+}
+
+const migrationQRSize = 512
+
+type migrationQRBody struct {
+	// IDs limits the codes to these accounts; empty means every account.
+	IDs []int64 `json:"ids"`
+	// PerQR is how many accounts go in each code; 0 means the default.
+	PerQR int `json:"perQR"`
+}
+
+// handleMigrationQR makes Google Authenticator "import accounts" QR codes, the
+// format Google Authenticator and many other apps import. Like any view of the
+// secrets it is behind the confirm-it's-you step.
+func (s *Server) handleMigrationQR(w http.ResponseWriter, r *http.Request, v *vault.Session) {
+	var b migrationQRBody
+	if !decode(w, r, &b) {
+		return
+	}
+	perQR := b.PerQR
+	if perQR == 0 {
+		perQR = migration.DefaultPerCode
+	}
+	if perQR < 1 || perQR > migration.MaxPerCode {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Choose between 1 and %d accounts per QR code.", migration.MaxPerCode))
+		return
+	}
+	recs, err := v.Records()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "The accounts could not be read from the vault.")
+		return
+	}
+	accounts, ok := pickAccounts(recs, b.IDs)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "One of the chosen accounts was not found.")
+		return
+	}
+	if len(accounts) == 0 {
+		writeError(w, http.StatusBadRequest, "There are no accounts to export yet.")
+		return
+	}
+	links, err := migration.Encode(accounts, perQR)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "These accounts cannot be exported as QR codes: "+err.Error())
+		return
+	}
+
+	type code struct {
+		Index    int    `json:"index"`
+		Accounts int    `json:"accounts"`
+		PNG      string `json:"png"`
+	}
+	codes := make([]code, len(links))
+	left := len(accounts)
+	for i, link := range links {
+		png, err := qrcode.PNG(link, migrationQRSize)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "A QR code could not be drawn.")
+			return
+		}
+		inThis := min(perQR, left)
+		left -= inThis
+		codes[i] = code{Index: i + 1, Accounts: inThis, PNG: "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)}
+	}
+	if err := v.Log("export_qr", fmt.Sprintf("accounts=%d codes=%d", len(accounts), len(links))); err != nil {
+		writeError(w, http.StatusInternalServerError, "The activity log could not be written.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"total": len(codes), "codes": codes})
+}
+
+// pickAccounts returns the accounts with the given ids (all when ids is empty).
+func pickAccounts(recs []store.Record, ids []int64) ([]migration.Account, bool) {
+	if len(ids) == 0 {
+		out := make([]migration.Account, len(recs))
+		for i, r := range recs {
+			out[i] = r.Account
+		}
+		return out, true
+	}
+	byID := make(map[int64]migration.Account, len(recs))
+	for _, r := range recs {
+		byID[r.ID] = r.Account
+	}
+	out := make([]migration.Account, 0, len(ids))
+	for _, id := range ids {
+		a, ok := byID[id]
+		if !ok {
+			return nil, false
+		}
+		out = append(out, a)
+	}
+	return out, true
 }

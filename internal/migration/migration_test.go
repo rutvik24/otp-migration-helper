@@ -1,8 +1,10 @@
 package migration
 
 import (
+	"bytes"
 	"encoding/base64"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -150,5 +152,90 @@ func TestDecodeURI_Errors(t *testing.T) {
 		if _, err := DecodeURI(l); err == nil {
 			t.Errorf("%s: expected error", name)
 		}
+	}
+}
+
+func sampleAccounts() []Account {
+	return []Account{
+		{Name: "alice@acme.com", Issuer: "Acme", Secret: []byte("12345678901234567890"), Algorithm: otp.SHA1, Digits: 6, Kind: TOTP},
+		{Name: "rutvik24", Issuer: "GitHub", Secret: []byte("secret-two-0123456789"), Algorithm: otp.SHA256, Digits: 8, Kind: TOTP},
+		{Name: "AWS root", Secret: []byte("hotp-secret-bytes!!!"), Algorithm: otp.SHA512, Digits: 6, Kind: HOTP, Counter: 41},
+		{Name: "jöhn \"d\" ☃", Issuer: "A:cme & Co", Secret: []byte{0x00, 0xff, 0x10, 0x80, 0x7f}, Algorithm: otp.SHA1, Digits: 6, Kind: TOTP},
+	}
+}
+
+func TestEncode_RoundTripsThroughDecode(t *testing.T) {
+	want := sampleAccounts()
+	links, err := Encode(want, 10)
+	if err != nil || len(links) != 1 {
+		t.Fatalf("links=%d err=%v", len(links), err)
+	}
+	if !strings.HasPrefix(links[0], "otpauth-migration://offline?data=") {
+		t.Errorf("not a Google Authenticator import link: %.60s", links[0])
+	}
+	batch, err := Decode(links[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Accounts) != len(want) || batch.Size != 1 || batch.Index != 0 {
+		t.Fatalf("batch: %+v", batch)
+	}
+	for i, w := range want {
+		g := batch.Accounts[i]
+		if g.Name != w.Name || g.Issuer != w.Issuer || !bytes.Equal(g.Secret, w.Secret) || g.Algorithm != w.Algorithm || g.Digits != w.Digits || g.Kind != w.Kind || g.Counter != w.Counter {
+			t.Errorf("account %d:\n got %+v\nwant %+v", i, g, w)
+		}
+	}
+}
+
+func TestEncode_SplitsIntoBatchesGoogleCanReassemble(t *testing.T) {
+	var accts []Account
+	for i := 0; i < 11; i++ {
+		accts = append(accts, Account{Name: "user" + strconv.Itoa(i), Secret: []byte("12345678901234567890"), Digits: 6})
+	}
+	links, err := Encode(accts, 5)
+	if err != nil || len(links) != 3 {
+		t.Fatalf("11 accounts at 5 per code should make 3 codes: %d %v", len(links), err)
+	}
+	var ids = map[int32]bool{}
+	total := 0
+	for i, l := range links {
+		b, err := Decode(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b.Size != 3 || b.Index != int32(i) {
+			t.Errorf("code %d: size=%d index=%d", i, b.Size, b.Index)
+		}
+		ids[b.BatchID] = true
+		total += len(b.Accounts)
+	}
+	if len(ids) != 1 || total != 11 {
+		t.Errorf("every code must share one batch id and together hold every account: ids=%v total=%d", ids, total)
+	}
+}
+
+func TestEncode_BatchIDsDifferBetweenExports(t *testing.T) {
+	a, _ := Encode(sampleAccounts(), 10)
+	b, _ := Encode(sampleAccounts(), 10)
+	da, _ := Decode(a[0])
+	db, _ := Decode(b[0])
+	if da.BatchID == db.BatchID {
+		t.Error("two exports should not share a batch id, or Google would merge them")
+	}
+}
+
+func TestEncode_RejectsBadInput(t *testing.T) {
+	if _, err := Encode(nil, 5); err == nil {
+		t.Error("no accounts must be an error")
+	}
+	if _, err := Encode(sampleAccounts(), 0); err == nil {
+		t.Error("zero per code must be an error")
+	}
+	if _, err := Encode([]Account{{Name: "x", Digits: 6}}, 5); err == nil {
+		t.Error("an account without a secret must be an error")
+	}
+	if _, err := Encode([]Account{{Name: "x", Secret: []byte("s"), Digits: 7}}, 5); err == nil {
+		t.Error("7 digits is not something Google can import")
 	}
 }

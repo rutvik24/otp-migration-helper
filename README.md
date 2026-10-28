@@ -134,6 +134,31 @@ Secrets are encrypted by otpmh before they reach any database, so whoever runs t
 
 To move an existing vault between databases, export it (`otpmh vault export`) and import into the new one.
 
+## Importing into another authenticator app
+
+otpmh can hand your accounts to another app in the format that app imports.
+
+    otpmh qr --vault                     # Google Authenticator import QR codes, after unlocking the vault
+    otpmh qr --vault --select github     # only some accounts
+    otpmh qr --vault --png-dir ./codes   # also save the codes as images
+    otpmh vault export --format aegis --yes --out aegis.json
+
+In the web app use **Export**: "Show QR codes" for the scan-able import codes, or "Download a file". Both ask you to confirm your credentials first, and both are noted in the activity log.
+
+| You are importing into | Use |
+| --- | --- |
+| Google Authenticator | Import QR codes (menu, Transfer accounts, Import accounts, scan each code in order) |
+| Aegis, 2FAS, Ente Auth, FreeOTP+, Authenticator Pro | The same import QR codes (they read Google's format), or the Aegis JSON file |
+| Ente Auth, FreeOTP+ and others with a plain-text import | The `otpauth` list (`--format otpauth`) |
+| andOTP | andOTP JSON (`--format andotp`) |
+| Bitwarden, Proton Pass | Bitwarden JSON (`--format bitwarden`) |
+| Apple Passwords, and managers that import CSV | CSV (`--format passwords-csv`) |
+| Microsoft Authenticator, Authy, 1Password, and anything that scans one account at a time | One QR code per account: "Show QR" in the web app, or `otpmh show --all` |
+
+The file formats follow each app's documented import format, and the import QR codes were checked against Google's published layout, including by reading them back with an independent decoder. I could not test every app, so if an app rejects a file, tell me which one.
+
+Import codes hold up to 5 accounts each (`--per-qr`, at most 10) so each stays easy to scan; a larger vault simply makes more codes.
+
 ## Development
 
     go vet ./... && go test ./...
