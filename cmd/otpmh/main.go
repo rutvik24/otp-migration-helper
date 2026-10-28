@@ -14,6 +14,7 @@ Usage:
   otpmh live [--all] [link|image ...]   live TOTP/HOTP codes with timers (q quits)
   otpmh scan [--method capture|shortcut] [--all]   macOS: scan QR codes from the screen
   otpmh install-shortcuts               macOS: add scanning shortcuts to the Shortcuts app
+  otpmh vault init|import|list|log     encrypted local vault (see README)
   otpmh help
 
 Inputs are otpauth-migration:// links or QR image paths; with none given,
@@ -40,6 +41,8 @@ func run(args []string, stdin io.Reader, out io.Writer) error {
 		return runScan(args[1:], stdin, out)
 	case "install-shortcuts":
 		return runInstallShortcuts(out)
+	case "vault":
+		return runVault(args[1:], stdin, out)
 	case "help", "-h", "--help":
 		fmt.Fprintln(out, usage)
 		return nil

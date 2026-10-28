@@ -251,3 +251,7 @@ func ageDecrypt(blob []byte, id age.Identity) ([]byte, error) {
 	}
 	return io.ReadAll(r)
 }
+
+// SetWorkFactorForTests lowers the scrypt cost so tests that create many
+// vaults stay fast. Never call it outside tests.
+func SetWorkFactorForTests(logN int) { workFactor = logN }
