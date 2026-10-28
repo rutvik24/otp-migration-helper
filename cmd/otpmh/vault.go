@@ -45,26 +45,60 @@ func runVault(args []string, stdin io.Reader, out io.Writer) error {
 
 // vaultFlags are shared by every vault command.
 type vaultFlags struct {
-	path     string
-	identity string
+	path        string
+	databaseURL string
+	identity    string
 }
 
 func addVaultFlags(fs *flag.FlagSet) *vaultFlags {
 	f := &vaultFlags{}
-	fs.StringVar(&f.path, "vault-path", "", "vault file (default: <user config dir>/otpmh/vault.db)")
+	fs.StringVar(&f.path, "vault-path", "", "SQLite vault file (default: <user config dir>/otpmh/vault.db)")
+	fs.StringVar(&f.databaseURL, "database-url", "", "keep the vault in PostgreSQL or MySQL (postgres://… or mysql://…); prefer OTPMH_DATABASE_URL so the password stays out of the process list")
 	fs.StringVar(&f.identity, "ssh-identity", "", "SSH private key file used to unlock the vault")
 	return f
 }
 
+// resolvePath returns the vault target: a SQLite file path or a database URL.
 func (f *vaultFlags) resolvePath() (string, error) {
-	if f.path != "" {
-		return f.path, nil
+	return resolveTarget(f.databaseURL, f.path, os.Getenv)
+}
+
+// resolveTarget picks where the vault lives. Flags win over the environment:
+// --database-url, then --vault-path, then OTPMH_DATABASE_URL, then a file named
+// by OTPMH_DATABASE_URL_FILE (for Docker secrets), then OTPMH_VAULT_PATH, then
+// the default file in the user's config directory.
+func resolveTarget(databaseURL, path string, env func(string) string) (string, error) {
+	switch {
+	case databaseURL != "":
+		return checkDatabaseURL(databaseURL)
+	case path != "":
+		return path, nil
+	}
+	if u := env("OTPMH_DATABASE_URL"); u != "" {
+		return checkDatabaseURL(u)
+	}
+	if file := env("OTPMH_DATABASE_URL_FILE"); file != "" {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return "", fmt.Errorf("OTPMH_DATABASE_URL_FILE: %w", err)
+		}
+		return checkDatabaseURL(strings.TrimSpace(string(data)))
+	}
+	if p := env("OTPMH_VAULT_PATH"); p != "" {
+		return p, nil
 	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, "otpmh", "vault.db"), nil
+}
+
+func checkDatabaseURL(u string) (string, error) {
+	if !store.IsDatabaseURL(u) {
+		return "", errors.New("the database URL must start with postgres://, postgresql:// or mysql://")
+	}
+	return u, nil
 }
 
 func runVaultInit(args []string, out io.Writer) error {
@@ -99,7 +133,7 @@ func runVaultInit(args []string, out io.Writer) error {
 		return err
 	}
 
-	sayln(out, "Vault created:", path)
+	sayln(out, "Vault created:", store.Describe(path))
 	if recoveryCode != "" {
 		say(out, "Recovery code (shown once, store it safely): %s\n", recoveryCode)
 		sayln(out, "Recovery also needs the recovery passphrase you just chose.")

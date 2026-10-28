@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,8 +53,8 @@ func TestCreate_ExistingFileErrors(t *testing.T) {
 	}
 }
 
-func TestWrapped_RoundTripAndSet(t *testing.T) {
-	s, _, _ := newStore(t)
+func testWrappedRoundTripAndSet(t *testing.T, mk maker) {
+	s, _, _ := mk(t)
 	w, err := s.Wrapped()
 	if err != nil || w.Mode != vaultcrypto.Password || string(w.Password) != "blob" {
 		t.Fatalf("w=%+v err=%v", w, err)
@@ -66,8 +67,8 @@ func TestWrapped_RoundTripAndSet(t *testing.T) {
 	}
 }
 
-func TestAddAccounts_RoundTrip(t *testing.T) {
-	s, _, key := newStore(t)
+func testAddAccountsRoundTrip(t *testing.T, mk maker) {
+	s, _, key := mk(t)
 	if n, err := s.AddAccounts(key, []migration.Account{account("a"), account("b")}); err != nil || n != 2 {
 		t.Fatalf("n=%d err=%v", n, err)
 	}
@@ -81,8 +82,8 @@ func TestAddAccounts_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestAddAccounts_Dedupes(t *testing.T) {
-	s, _, key := newStore(t)
+func testAddAccountsDedupes(t *testing.T, mk maker) {
+	s, _, key := mk(t)
 	if _, err := s.AddAccounts(key, []migration.Account{account("a")}); err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +93,21 @@ func TestAddAccounts_Dedupes(t *testing.T) {
 	}
 }
 
-func TestSecretNotPlaintextOnDisk(t *testing.T) {
+func testSecretNotStoredInPlaintext(t *testing.T, mk maker) {
+	s, _, key := mk(t)
+	if _, err := s.AddAccounts(key, []migration.Account{account("a")}); err != nil {
+		t.Fatal(err)
+	}
+	var stored []byte
+	if err := s.QueryRow(`SELECT secret FROM accounts`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(stored, secret) {
+		t.Error("secret column holds the plaintext secret")
+	}
+}
+
+func TestSecretNotPlaintextInSQLiteFile(t *testing.T) {
 	s, path, key := newStore(t)
 	if _, err := s.AddAccounts(key, []migration.Account{account("a")}); err != nil {
 		t.Fatal(err)
@@ -109,8 +124,8 @@ func TestSecretNotPlaintextOnDisk(t *testing.T) {
 	}
 }
 
-func TestSetCounter_Persists(t *testing.T) {
-	s, path, key := newStore(t)
+func testSetCounterPersists(t *testing.T, mk maker) {
+	s, target, key := mk(t)
 	if _, err := s.AddAccounts(key, []migration.Account{account("a")}); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +136,7 @@ func TestSetCounter_Persists(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	s2, err := Open(path)
+	s2, err := Open(target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,8 +146,8 @@ func TestSetCounter_Persists(t *testing.T) {
 	}
 }
 
-func TestLog_Order(t *testing.T) {
-	s, _, _ := newStore(t)
+func testLogOrder(t *testing.T, mk maker) {
+	s, _, _ := mk(t)
 	for _, a := range []string{"first", "second"} {
 		if err := s.Log(a, "detail"); err != nil {
 			t.Fatal(err)
@@ -144,8 +159,8 @@ func TestLog_Order(t *testing.T) {
 	}
 }
 
-func TestRecoveryLockout(t *testing.T) {
-	s, _, _ := newStore(t)
+func testRecoveryLockout(t *testing.T, mk maker) {
+	s, _, _ := mk(t)
 	now := time.Unix(1_000_000, 0)
 	for i := 1; i <= 4; i++ {
 		if err := s.RecordRecoveryFailure(now); err != nil {
@@ -169,8 +184,8 @@ func TestRecoveryLockout(t *testing.T) {
 	}
 }
 
-func TestRekey_OldKeyFailsNewKeyWorks(t *testing.T) {
-	s, _, oldKey := newStore(t)
+func testRekeyOldKeyFailsNewKeyWorks(t *testing.T, mk maker) {
+	s, _, oldKey := mk(t)
 	if _, err := s.AddAccounts(oldKey, []migration.Account{account("a")}); err != nil {
 		t.Fatal(err)
 	}
@@ -198,8 +213,8 @@ func TestRekey_OldKeyFailsNewKeyWorks(t *testing.T) {
 	}
 }
 
-func TestRekey_WrongOldKeyChangesNothing(t *testing.T) {
-	s, _, key := newStore(t)
+func testRekeyWrongOldKeyChangesNothing(t *testing.T, mk maker) {
+	s, _, key := mk(t)
 	if _, err := s.AddAccounts(key, []migration.Account{account("a")}); err != nil {
 		t.Fatal(err)
 	}
@@ -213,5 +228,150 @@ func TestRekey_WrongOldKeyChangesNothing(t *testing.T) {
 	}
 	if got, _ := s.Wrapped(); got.Mode != vaultcrypto.Password {
 		t.Errorf("wrapped changed after failed rekey: %+v", got)
+	}
+}
+
+// ---------- every backend ----------
+
+type maker func(t *testing.T) (*Store, string, []byte)
+
+// backends returns SQLite always, and PostgreSQL / MySQL when a test server's
+// URL is given in OTPMH_TEST_POSTGRES_URL / OTPMH_TEST_MYSQL_URL.
+func backends(t *testing.T) map[string]maker {
+	t.Helper()
+	all := map[string]maker{"sqlite": newStore}
+	for name, env := range map[string]string{"postgres": "OTPMH_TEST_POSTGRES_URL", "mysql": "OTPMH_TEST_MYSQL_URL"} {
+		if target := os.Getenv(env); target != "" {
+			all[name] = serverMaker(target)
+		}
+	}
+	return all
+}
+
+// serverMaker starts every test from empty tables on a shared test database.
+func serverMaker(target string) maker {
+	return func(t *testing.T) (*Store, string, []byte) {
+		t.Helper()
+		dropTables(t, target)
+		key, err := vaultcrypto.NewDataKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := Create(target, vaultcrypto.Wrapped{Mode: vaultcrypto.Password, Password: []byte("blob")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = s.Close() })
+		return s, target, key
+	}
+}
+
+func dropTables(t *testing.T, target string) {
+	t.Helper()
+	if err := DropForTests(target); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBackends(t *testing.T) {
+	suite := map[string]func(*testing.T, maker){
+		"rapped_RoundTripAndSet":         testWrappedRoundTripAndSet,
+		"ddAccounts_RoundTrip":           testAddAccountsRoundTrip,
+		"ddAccounts_Dedupes":             testAddAccountsDedupes,
+		"etCounter_Persists":             testSetCounterPersists,
+		"og_Order":                       testLogOrder,
+		"ecoveryLockout":                 testRecoveryLockout,
+		"ekey_OldKeyFailsNewKeyWorks":    testRekeyOldKeyFailsNewKeyWorks,
+		"ekey_WrongOldKeyChangesNothing": testRekeyWrongOldKeyChangesNothing,
+		"SecretNotStoredInPlaintext":     testSecretNotStoredInPlaintext,
+	}
+	for backend, mk := range backends(t) {
+		for name, run := range suite {
+			t.Run(backend+"/"+name, func(t *testing.T) { run(t, mk) })
+		}
+	}
+}
+
+func TestServerBackends_ExistingAndEmptyDatabases(t *testing.T) {
+	for backend, mk := range backends(t) {
+		if backend == "sqlite" {
+			continue
+		}
+		t.Run(backend, func(t *testing.T) {
+			_, target, _ := mk(t)
+			if !Exists(target) {
+				t.Error("Exists should be true after Create")
+			}
+			if _, err := Create(target, vaultcrypto.Wrapped{}); err == nil {
+				t.Error("creating a second vault in the same database must fail")
+			}
+			dropTables(t, target)
+			if Exists(target) {
+				t.Error("Exists should be false for an empty database")
+			}
+			if _, err := Open(target); err == nil || !strings.Contains(err.Error(), "no vault was found") {
+				t.Errorf("opening an empty database: %v", err)
+			}
+		})
+	}
+}
+
+func TestResolveTargets(t *testing.T) {
+	cases := map[string]string{
+		"/var/lib/otpmh/vault.db":                         "SQLite",
+		"vault.db":                                        "SQLite",
+		"postgres://u:p@db.example:5432/otp":              "PostgreSQL",
+		"postgresql://u:p@db.example/otp?sslmode=require": "PostgreSQL",
+		"mysql://u:p@db.example:3306/otp":                 "MySQL",
+	}
+	for target, want := range cases {
+		d, _, err := resolve(target)
+		if err != nil || d.name != want {
+			t.Errorf("%s: got %q err %v, want %s", target, d.name, err, want)
+		}
+	}
+	if _, _, err := resolve(""); err == nil {
+		t.Error("empty target must fail")
+	}
+	if IsDatabaseURL("/var/lib/vault.db") || !IsDatabaseURL("mysql://u:p@h/db") || !IsDatabaseURL("postgres://u:p@h/db") {
+		t.Error("IsDatabaseURL misclassifies")
+	}
+}
+
+func TestMySQLDSN(t *testing.T) {
+	dsn, err := mysqlDSN("mysql://otp:s3cret@db.example/vault?tls=skip-verify&timeout=5s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"otp:s3cret@tcp(db.example:3306)/vault", "charset=utf8mb4", "tls=skip-verify", "timeout=5s"} {
+		if !strings.Contains(dsn, want) {
+			t.Errorf("dsn %q missing %q", dsn, want)
+		}
+	}
+	for _, bad := range []string{"mysql://", "mysql://u:p@host", "mysql://u:p@/db"} {
+		if _, err := mysqlDSN(bad); err == nil {
+			t.Errorf("%q should be rejected", bad)
+		}
+	}
+}
+
+func TestDescribeNeverShowsThePassword(t *testing.T) {
+	for _, target := range []string{"postgres://u:hunter2@db.example:5432/otp", "mysql://u:hunter2@db.example/otp"} {
+		got := Describe(target)
+		if strings.Contains(got, "hunter2") || !strings.Contains(got, "db.example") {
+			t.Errorf("Describe(%q) = %q", target, got)
+		}
+	}
+	if Describe("/data/vault.db") != "/data/vault.db" {
+		t.Error("a file path should be shown as is")
+	}
+}
+
+func TestRebindForPostgres(t *testing.T) {
+	if got := postgresDialect.rebind("UPDATE t SET a = ?, b = ? WHERE id = ?"); got != "UPDATE t SET a = $1, b = $2 WHERE id = $3" {
+		t.Errorf("got %q", got)
+	}
+	if got := sqliteDialect.rebind("a = ?"); got != "a = ?" {
+		t.Errorf("sqlite should be untouched: %q", got)
 	}
 }

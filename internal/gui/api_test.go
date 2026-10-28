@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 
 	"github.com/rutvik24/otp-migration-helper/internal/qrcode"
+	"github.com/rutvik24/otp-migration-helper/internal/store"
 )
 
 const (
@@ -544,5 +546,40 @@ func TestUnlock_WithUploadedKeyText(t *testing.T) {
 		if code, out := c.json("POST", "/api/unlock", tc.body); code != tc.want {
 			t.Errorf("%s: %d %v, want %d", tc.name, code, out, tc.want)
 		}
+	}
+}
+
+// The web API end to end on real PostgreSQL / MySQL servers, when their test URLs are set.
+func TestFlow_OnServerDatabases(t *testing.T) {
+	for name, envName := range map[string]string{"postgres": "OTPMH_TEST_POSTGRES_URL", "mysql": "OTPMH_TEST_MYSQL_URL"} {
+		target := os.Getenv(envName)
+		if target == "" {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			if err := store.DropForTests(target); err != nil {
+				t.Fatal(err)
+			}
+			s, err := New(Config{VaultPath: target, Port: 4040})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(s.sessions.closeAll)
+			s.now = func() time.Time { return time.Unix(59, 0) }
+			c := &client{t: t, s: s, cookie: launch(t, s)}
+			c.createAndUnlock()
+			c.commit(totpURI)
+			_, out := c.json("GET", "/api/codes", nil)
+			if accountsOf(out)[0]["code"] != "287082" {
+				t.Errorf("codes: %v", out)
+			}
+			if rec := c.req("POST", "/api/export", map[string]any{"format": "otpauth", "confirm": true}); rec.Code != http.StatusForbidden {
+				t.Errorf("export without verifying: %d", rec.Code)
+			}
+			c.verify()
+			if rec := c.req("POST", "/api/export", map[string]any{"format": "otpauth", "confirm": true}); rec.Code != 200 || !strings.Contains(rec.Body.String(), "Acme:alice") {
+				t.Errorf("export: %d %s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }

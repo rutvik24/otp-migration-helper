@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 
 	"github.com/rutvik24/otp-migration-helper/internal/prompt"
+	"github.com/rutvik24/otp-migration-helper/internal/store"
 	"github.com/rutvik24/otp-migration-helper/internal/vaultcrypto"
 )
 
@@ -394,5 +395,81 @@ func TestRecover_ReEncryptsRowsUnderNewKey(t *testing.T) {
 	}
 	if recs, err := s.Accounts(newKey); err != nil || len(recs) != 1 {
 		t.Errorf("recs=%v err=%v", recs, err)
+	}
+}
+
+func TestResolveTarget_Precedence(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "url.txt")
+	if err := os.WriteFile(file, []byte("  mysql://u:p@db/otp\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	cases := []struct {
+		name        string
+		url, path   string
+		env         map[string]string
+		want        string
+		wantErrPart string
+	}{
+		{"flag url wins over everything", "postgres://a/b", "/x.db", map[string]string{"OTPMH_DATABASE_URL": "mysql://c/d"}, "postgres://a/b", ""},
+		{"flag path beats the environment", "", "/x.db", map[string]string{"OTPMH_DATABASE_URL": "mysql://c/d"}, "/x.db", ""},
+		{"env url", "", "", map[string]string{"OTPMH_DATABASE_URL": "mysql://c/d", "OTPMH_VAULT_PATH": "/y.db"}, "mysql://c/d", ""},
+		{"env url file (docker secret)", "", "", map[string]string{"OTPMH_DATABASE_URL_FILE": file}, "mysql://u:p@db/otp", ""},
+		{"env vault path", "", "", map[string]string{"OTPMH_VAULT_PATH": "/y.db"}, "/y.db", ""},
+		{"not a database url", "https://example.com", "", nil, "", "must start with"},
+		{"missing secret file", "", "", map[string]string{"OTPMH_DATABASE_URL_FILE": file + ".nope"}, "", "OTPMH_DATABASE_URL_FILE"},
+	}
+	for _, c := range cases {
+		got, err := resolveTarget(c.url, c.path, env(c.env))
+		if c.wantErrPart != "" {
+			if err == nil || !strings.Contains(err.Error(), c.wantErrPart) {
+				t.Errorf("%s: err=%v, want %q", c.name, err, c.wantErrPart)
+			}
+			continue
+		}
+		if err != nil || got != c.want {
+			t.Errorf("%s: got %q err %v, want %q", c.name, got, err, c.want)
+		}
+	}
+	if got, err := resolveTarget("", "", env(nil)); err != nil || !strings.HasSuffix(got, filepath.Join("otpmh", "vault.db")) {
+		t.Errorf("default: %q %v", got, err)
+	}
+}
+
+// Runs the command-line vault against real servers when their test URLs are set.
+func TestVault_OnServerDatabases(t *testing.T) {
+	for name, envName := range map[string]string{"postgres": "OTPMH_TEST_POSTGRES_URL", "mysql": "OTPMH_TEST_MYSQL_URL"} {
+		target := os.Getenv(envName)
+		if target == "" {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			if err := store.DropForTests(target); err != nil {
+				t.Fatal(err)
+			}
+			scripted(t, pw, pw, recPass, recPass)
+			out := runOK(t, "vault", "init", "--unlock", "password", "--database-url", target)
+			if strings.Contains(out, "pass") && strings.Contains(out, "@") {
+				t.Errorf("output must not show the database URL or its password:\n%s", out)
+			}
+			code := recoveryCodeIn(t, out)
+			scripted(t, pw)
+			runOK(t, "vault", "import", "--database-url", target, testLink("alice"))
+			scripted(t, pw)
+			if list := runOK(t, "vault", "list", "--database-url", target); !strings.Contains(list, "alice") {
+				t.Errorf("list: %s", list)
+			}
+			scripted(t, code, recPass, "new password", "new password", "new-recovery-pass-2", "new-recovery-pass-2")
+			runOK(t, "vault", "recover", "--unlock", "password", "--database-url", target)
+			scripted(t, "new password")
+			if list := runOK(t, "vault", "list", "--database-url", target); !strings.Contains(list, "alice") {
+				t.Errorf("accounts lost after recovery: %s", list)
+			}
+			scripted(t, pw, pw)
+			var sink strings.Builder
+			if err := run([]string{"vault", "init", "--unlock", "password", "--no-recovery", "--database-url", target}, nil, &sink); err == nil {
+				t.Error("a second vault in the same database must be refused")
+			}
+		})
 	}
 }

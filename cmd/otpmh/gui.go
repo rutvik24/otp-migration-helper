@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/rutvik24/otp-migration-helper/internal/gui"
+	"github.com/rutvik24/otp-migration-helper/internal/store"
 	"github.com/rutvik24/otp-migration-helper/internal/vault"
 )
 
@@ -47,7 +48,8 @@ func splitHosts(csv string) []string {
 func guiConfig(args []string, env func(string) string, out io.Writer) (gui.Config, bool, error) {
 	fs := flag.NewFlagSet("gui", flag.ContinueOnError)
 	fs.SetOutput(out)
-	vaultPath := fs.String("vault-path", env("OTPMH_VAULT_PATH"), "vault file (default: <user config dir>/otpmh/vault.db)")
+	vaultPath := fs.String("vault-path", "", "SQLite vault file (default: <user config dir>/otpmh/vault.db)")
+	databaseURL := fs.String("database-url", "", "PostgreSQL or MySQL URL; prefer OTPMH_DATABASE_URL (or OTPMH_DATABASE_URL_FILE) so the password stays out of the process list")
 	port := fs.Int("port", 0, "local port (default: a free one)")
 	noOpen := fs.Bool("no-open", false, "do not open the browser")
 	listen := fs.String("listen", env("OTPMH_LISTEN"), "server mode: address to listen on, for example :8080")
@@ -63,7 +65,7 @@ func guiConfig(args []string, env func(string) string, out io.Writer) (gui.Confi
 		hosts = splitHosts(env("OTPMH_ALLOWED_HOSTS"))
 	}
 
-	path, err := (&vaultFlags{path: *vaultPath}).resolvePath()
+	path, err := resolveTarget(*databaseURL, *vaultPath, env)
 	if err != nil {
 		return gui.Config{}, false, err
 	}
@@ -91,6 +93,7 @@ func runGuiContext(ctx context.Context, args []string, env func(string) string, 
 
 	if cfg.Listen != "" {
 		say(out, "otpmh is listening on %s\n", cfg.Listen)
+		say(out, "Vault: %s\n", store.Describe(cfg.VaultPath))
 		if !vault.Exists(cfg.VaultPath) {
 			say(out, "No vault yet. Open the page and use this setup code to create it: %s\n", srv.SetupCode())
 		}

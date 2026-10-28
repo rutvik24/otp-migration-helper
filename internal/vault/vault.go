@@ -42,10 +42,9 @@ type NewCredentials struct {
 	RecoveryPassphrase string
 }
 
-func Exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
+// Exists reports whether a vault has been created at the target: a SQLite file
+// path, or a postgres:// or mysql:// URL.
+func Exists(target string) bool { return store.Exists(target) }
 
 func ModeOf(path string) (vaultcrypto.Mode, error) {
 	s, err := store.Open(path)
@@ -85,8 +84,10 @@ func Create(path string, o CreateOptions) (string, error) {
 		}
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return "", err
+	if !store.IsDatabaseURL(path) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return "", err
+		}
 	}
 	s, err := store.Create(path, wrapped)
 	if err != nil {

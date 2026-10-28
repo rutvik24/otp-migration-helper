@@ -13,6 +13,7 @@ import (
 
 	"github.com/rutvik24/otp-migration-helper/internal/migration"
 	"github.com/rutvik24/otp-migration-helper/internal/otp"
+	"github.com/rutvik24/otp-migration-helper/internal/store"
 	"github.com/rutvik24/otp-migration-helper/internal/vaultcrypto"
 )
 
@@ -307,5 +308,64 @@ func TestVerify(t *testing.T) {
 	}
 	if verify != 1 || failed != 3 {
 		t.Errorf("verify=%d failed=%d", verify, failed)
+	}
+}
+
+// The same lifecycle on real PostgreSQL / MySQL servers, when their test URLs are set.
+func TestLifecycle_OnServerDatabases(t *testing.T) {
+	for name, envName := range map[string]string{"postgres": "OTPMH_TEST_POSTGRES_URL", "mysql": "OTPMH_TEST_MYSQL_URL"} {
+		target := os.Getenv(envName)
+		if target == "" {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			if err := store.DropForTests(target); err != nil {
+				t.Fatal(err)
+			}
+			if Exists(target) {
+				t.Fatal("database should start empty")
+			}
+			code, err := Create(target, CreateOptions{Setup: vaultcrypto.Setup{Mode: vaultcrypto.Password, Password: pw}, RecoveryPassphrase: recPass})
+			if err != nil || code == "" || !Exists(target) {
+				t.Fatalf("create: code=%q err=%v", code, err)
+			}
+			s, err := Open(target, Creds{Password: pw})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n, err := s.Import([]migration.Account{account("a"), account("b")}); err != nil || n != 2 {
+				t.Fatalf("import n=%d err=%v", n, err)
+			}
+			if n, _ := s.Import([]migration.Account{account("a")}); n != 0 {
+				t.Errorf("duplicate import added %d", n)
+			}
+			if data, err := s.Export("otpauth"); err != nil || !strings.Contains(string(data), "Acme:a") {
+				t.Errorf("export: %v %q", err, data)
+			}
+			_ = s.Close()
+			if err := Verify(target, Creds{Password: pw}); err != nil {
+				t.Errorf("verify: %v", err)
+			}
+			if _, err := Open(target, Creds{Password: "wrong"}); err == nil {
+				t.Error("wrong password opened the vault")
+			}
+			next := func() (NewCredentials, error) {
+				return NewCredentials{Setup: vaultcrypto.Setup{Mode: vaultcrypto.Password, Password: "new password"}, RecoveryPassphrase: "new-recovery-pass-2"}, nil
+			}
+			if _, err := Recover(target, code, recPass, next); err != nil {
+				t.Fatalf("recover: %v", err)
+			}
+			s, err = Open(target, Creds{Password: "new password"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if recs, err := s.Records(); err != nil || len(recs) != 2 {
+				t.Errorf("accounts after rekey: %v %v", recs, err)
+			}
+			_ = s.Close()
+			if logs, err := Logs(target); err != nil || len(logs) < 5 {
+				t.Errorf("logs: %d %v", len(logs), err)
+			}
+		})
 	}
 }
