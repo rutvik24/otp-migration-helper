@@ -2,8 +2,11 @@ package gui
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/ssh"
 	"google.golang.org/protobuf/encoding/protowire"
 
 	"github.com/rutvik24/otp-migration-helper/internal/qrcode"
@@ -81,6 +85,13 @@ func (c *client) createAndUnlock() {
 	}
 	if code, out := c.json("POST", "/api/unlock", map[string]any{"password": pw}); code != 200 {
 		c.t.Fatalf("unlock: %d %v", code, out)
+	}
+}
+
+func (c *client) verify() {
+	c.t.Helper()
+	if code, out := c.json("POST", "/api/reauth", map[string]any{"password": pw}); code != 200 {
+		c.t.Fatalf("reauth: %d %v", code, out)
 	}
 }
 
@@ -298,6 +309,7 @@ func TestExport_RequiresConfirm(t *testing.T) {
 	c := newClient(t)
 	c.createAndUnlock()
 	c.commit(totpURI)
+	c.verify()
 	if rec := c.req("POST", "/api/export", map[string]any{"format": "bitwarden"}); rec.Code != http.StatusBadRequest {
 		t.Errorf("without confirm: %d", rec.Code)
 	}
@@ -378,6 +390,7 @@ func TestDetails_ReturnsSecretOnlyWhenUnlocked(t *testing.T) {
 	c.commit(totpURI)
 	_, codes := c.json("GET", "/api/codes", nil)
 	id := itoa(accountsOf(codes)[0]["id"])
+	c.verify()
 	code, out := c.json("GET", "/api/accounts/"+id+"/details", nil)
 	if code != 200 || out["secret"] != "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" || !strings.HasPrefix(out["url"].(string), "otpauth://totp/Acme:alice@x.com") {
 		t.Errorf("%d %v", code, out)
@@ -395,6 +408,7 @@ func TestLog_HasNoSecrets(t *testing.T) {
 	c := newClient(t)
 	c.createAndUnlock()
 	c.commit(totpURI)
+	c.verify()
 	c.json("POST", "/api/export", map[string]any{"format": "otpauth", "confirm": true})
 	rec := c.req("GET", "/api/log", nil)
 	body := rec.Body.String()
@@ -406,6 +420,129 @@ func TestLog_HasNoSecrets(t *testing.T) {
 	for _, action := range []string{"create", "unlock", "import", "export"} {
 		if !strings.Contains(body, action) {
 			t.Errorf("log missing %q: %s", action, body)
+		}
+	}
+}
+
+func TestSensitive_RequiresReauth(t *testing.T) {
+	c := newClient(t)
+	c.createAndUnlock()
+	c.commit(totpURI)
+	_, codes := c.json("GET", "/api/codes", nil)
+	id := itoa(accountsOf(codes)[0]["id"])
+	sensitive := func() []int {
+		return []int{
+			c.req("GET", "/api/accounts/"+id+"/qr.png", nil).Code,
+			c.req("GET", "/api/accounts/"+id+"/details", nil).Code,
+			c.req("POST", "/api/export", map[string]any{"format": "otpauth", "confirm": true}).Code,
+		}
+	}
+	for i, code := range sensitive() {
+		if code != http.StatusForbidden {
+			t.Errorf("endpoint %d before verifying: %d, want 403", i, code)
+		}
+	}
+	_, out := c.json("GET", "/api/accounts/"+id+"/details", nil)
+	if out["reauth"] != true {
+		t.Errorf("403 must say reauth is needed: %v", out)
+	}
+
+	if code, _ := c.json("POST", "/api/reauth", map[string]any{"password": "wrong"}); code != http.StatusUnauthorized {
+		t.Errorf("wrong password: %d, want 401", code)
+	}
+	if got := sensitive(); got[0] != 403 {
+		t.Errorf("a failed verification must not unlock anything: %v", got)
+	}
+
+	c.verify()
+	for i, code := range sensitive() {
+		if code != http.StatusOK {
+			t.Errorf("endpoint %d after verifying: %d, want 200", i, code)
+		}
+	}
+
+	// The verification expires after two minutes.
+	c.s.now = func() time.Time { return time.Unix(59, 0).Add(verifyWindow + time.Second) }
+	for i, code := range sensitive() {
+		if code != http.StatusForbidden {
+			t.Errorf("endpoint %d after expiry: %d, want 403", i, code)
+		}
+	}
+
+	// Locking and unlocking again also requires a fresh verification.
+	c.s.now = func() time.Time { return time.Unix(59, 0) }
+	c.verify()
+	c.json("POST", "/api/lock", nil)
+	c.json("POST", "/api/unlock", map[string]any{"password": pw})
+	if got := sensitive(); got[1] != 403 {
+		t.Errorf("verification must not survive a lock: %v", got)
+	}
+}
+
+func TestReauth_RateLimitedAndLogged(t *testing.T) {
+	c := newClient(t)
+	c.createAndUnlock()
+	for i := 0; i < 3; i++ {
+		c.json("POST", "/api/reauth", map[string]any{"password": "wrong"})
+	}
+	if rec := c.req("POST", "/api/reauth", map[string]any{"password": pw}); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("status %d, want 429", rec.Code)
+	}
+	c.s.now = func() time.Time { return time.Unix(59, 0).Add(time.Minute) }
+	c.s.limiter.now = c.s.now
+	c.verify()
+	log := c.req("GET", "/api/log", nil).Body.String()
+	for _, action := range []string{"verify_failed", `"verify"`} {
+		if !strings.Contains(log, action) {
+			t.Errorf("log missing %s: %s", action, log)
+		}
+	}
+}
+
+func sshKeyPair(t *testing.T, passphrase string) (publicLine, privateText string) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var block *pem.Block
+	if passphrase == "" {
+		block, err = ssh.MarshalPrivateKey(priv, "")
+	} else {
+		block, err = ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte(passphrase))
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	sshPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(ssh.MarshalAuthorizedKey(sshPub)), string(pem.EncodeToMemory(block))
+}
+
+func TestUnlock_WithUploadedKeyText(t *testing.T) {
+	pub, private := sshKeyPair(t, "key-pass")
+	c := newClient(t)
+	if code, out := c.json("POST", "/api/vault", map[string]any{"mode": "both", "password": pw, "sshPublicKey": pub, "noRecovery": true}); code != 200 {
+		t.Fatalf("create: %d %v", code, out)
+	}
+	cases := []struct {
+		name string
+		body map[string]any
+		want int
+	}{
+		{"key and passphrase and password", map[string]any{"password": pw, "sshPrivateKey": private, "sshPassphrase": "key-pass"}, 200},
+		{"windows line endings", map[string]any{"password": pw, "sshPrivateKey": strings.ReplaceAll(private, "\n", "\r\n"), "sshPassphrase": "key-pass"}, 200},
+		{"missing passphrase", map[string]any{"password": pw, "sshPrivateKey": private}, 401},
+		{"missing key", map[string]any{"password": pw}, 401},
+		{"a server path is no longer read", map[string]any{"password": pw, "sshIdentityPath": "/etc/hostname"}, 401},
+	}
+	for _, tc := range cases {
+		c.s.limiter.ok("10.0.0.1") // keep the rate limit out of this table
+		c.json("POST", "/api/lock", nil)
+		if code, out := c.json("POST", "/api/unlock", tc.body); code != tc.want {
+			t.Errorf("%s: %d %v, want %d", tc.name, code, out, tc.want)
 		}
 	}
 }

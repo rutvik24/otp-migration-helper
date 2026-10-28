@@ -16,6 +16,20 @@ type session struct {
 	v        *vault.Session
 	created  time.Time
 	lastSeen time.Time
+	// verifiedUntil is when the user's last "confirm it's you" expires.
+	verifiedUntil time.Time
+}
+
+func (s *session) markVerified(until time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.verifiedUntil = until
+}
+
+func (s *session) verified(now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return now.Before(s.verifiedUntil)
 }
 
 func (s *session) vaultSession() *vault.Session {
@@ -32,6 +46,7 @@ func (s *session) setVault(v *vault.Session) {
 		_ = s.v.Close() // the data key is wiped even if the file close fails
 	}
 	s.v = v
+	s.verifiedUntil = time.Time{} // locking or unlocking always starts unverified
 }
 
 type sessions struct {

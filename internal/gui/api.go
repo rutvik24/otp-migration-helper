@@ -2,7 +2,6 @@ package gui
 
 import (
 	"crypto/subtle"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -20,6 +19,9 @@ import (
 )
 
 const (
+	// verifyWindow is how long a confirmation of the user's credentials
+	// allows viewing QR codes, secrets and exports.
+	verifyWindow  = 2 * time.Minute
 	totpPeriod    = 30
 	maxUploadSize = 10 << 20
 	minRecoveryPW = 12
@@ -37,12 +39,13 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 
 	mux.Handle("GET /api/codes", s.authed(s.handleCodes))
 	mux.Handle("POST /api/accounts/{id}/next", s.authed(s.handleNext))
-	mux.Handle("GET /api/accounts/{id}/qr.png", s.authed(s.handleQR))
-	mux.Handle("GET /api/accounts/{id}/details", s.authed(s.handleDetails))
+	mux.Handle("POST /api/reauth", s.authedSession(s.handleReauth))
+	mux.Handle("GET /api/accounts/{id}/qr.png", s.sensitive(s.handleQR))
+	mux.Handle("GET /api/accounts/{id}/details", s.sensitive(s.handleDetails))
 	mux.Handle("POST /api/decode-image", s.authed(s.handleDecodeImage))
 	mux.Handle("POST /api/import/preview", s.authed(s.handlePreview))
 	mux.Handle("POST /api/import/commit", s.authed(s.handleCommit))
-	mux.Handle("POST /api/export", s.authed(s.handleExport))
+	mux.Handle("POST /api/export", s.sensitive(s.handleExport))
 	mux.Handle("GET /api/log", s.authed(s.handleLog))
 }
 
@@ -70,28 +73,29 @@ type credentialsBody struct {
 }
 
 // validateSetup checks new credentials without keeping anything, so a bad
-// form fails before any vault is touched.
-func validateSetup(setup vaultcrypto.Setup, recoveryPassphrase string, needRecovery bool) error {
+// form fails before any vault is touched. It returns a message for the user,
+// or "" when the credentials are fine.
+func validateSetup(setup vaultcrypto.Setup, recoveryPassphrase string, needRecovery bool) string {
 	switch setup.Mode {
 	case vaultcrypto.Password, vaultcrypto.Either, vaultcrypto.Both:
 		if setup.Password == "" {
-			return errors.New("Enter a password.")
+			return "Enter a password."
 		}
 	case vaultcrypto.SSH:
 	default:
-		return errors.New("Choose how the vault unlocks: password, SSH key, either, or both.")
+		return "Choose how the vault unlocks: password, SSH key, either, or both."
 	}
 	if needRecovery && len(recoveryPassphrase) < minRecoveryPW {
-		return fmt.Errorf("The recovery passphrase needs at least %d characters.", minRecoveryPW)
+		return fmt.Sprintf("The recovery passphrase needs at least %d characters.", minRecoveryPW)
 	}
 	probe, err := vaultcrypto.NewDataKey()
 	if err != nil {
-		return err
+		return "Could not check the credentials. Try again."
 	}
 	if _, err := vaultcrypto.Wrap(probe, setup); err != nil {
-		return errors.New("That SSH public key could not be used. Paste the whole line from your .pub file.")
+		return "That SSH public key could not be used. Paste the whole line from your .pub file."
 	}
-	return nil
+	return ""
 }
 
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request, sess *session) {
@@ -116,8 +120,8 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request, sess *sess
 		}
 	}
 	setup := vaultcrypto.Setup{Mode: b.Mode, Password: b.Password, SSHPublicKey: b.SSHPublicKey}
-	if err := validateSetup(setup, b.RecoveryPassphrase, !b.NoRecovery); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if msg := validateSetup(setup, b.RecoveryPassphrase, !b.NoRecovery); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 	code, err := vault.Create(s.cfg.VaultPath, vault.CreateOptions{Setup: setup, RecoveryPassphrase: b.RecoveryPassphrase, NoRecovery: b.NoRecovery})
@@ -135,12 +139,26 @@ func tooMany(w http.ResponseWriter, wait time.Duration) {
 	writeError(w, http.StatusTooManyRequests, fmt.Sprintf("Too many attempts. Try again in %d seconds.", secs))
 }
 
-func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request, sess *session) {
-	var b struct {
-		Password        string `json:"password"`
-		SSHIdentityPath string `json:"sshIdentityPath"`
-		SSHPassphrase   string `json:"sshPassphrase"`
+// credentialsBody are the unlock credentials as the page sends them. The SSH
+// key arrives as text (uploaded in the browser or pasted); the server never
+// reads key files from its own disk.
+type unlockBody struct {
+	Password      string `json:"password"`
+	SSHPrivateKey string `json:"sshPrivateKey"`
+	SSHPassphrase string `json:"sshPassphrase"`
+}
+
+func (b unlockBody) creds() vault.Creds {
+	c := vault.Creds{Password: b.Password, SSHPassphrase: func() ([]byte, error) { return []byte(b.SSHPassphrase), nil }}
+	// Browsers and editors may hand over Windows line endings or stray blanks.
+	if key := strings.TrimSpace(strings.ReplaceAll(b.SSHPrivateKey, "\r\n", "\n")); key != "" {
+		c.SSHPrivateKey = []byte(key + "\n")
 	}
+	return c
+}
+
+func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request, sess *session) {
+	var b unlockBody
 	if !decode(w, r, &b) {
 		return
 	}
@@ -153,9 +171,7 @@ func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request, sess *sess
 		tooMany(w, wait)
 		return
 	}
-	creds := vault.Creds{Password: b.Password, SSHIdentityPath: strings.TrimSpace(b.SSHIdentityPath)}
-	creds.SSHPassphrase = func() ([]byte, error) { return []byte(b.SSHPassphrase), nil }
-	v, err := vault.Open(s.cfg.VaultPath, creds)
+	v, err := vault.Open(s.cfg.VaultPath, b.creds())
 	if err != nil {
 		s.limiter.fail(ip)
 		writeError(w, http.StatusUnauthorized, "Could not unlock. Check your password or key and try again.")
@@ -164,6 +180,29 @@ func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request, sess *sess
 	s.limiter.ok(ip)
 	s.ensure(w, sess).setVault(v)
 	writeJSON(w, http.StatusOK, map[string]any{"unlocked": true})
+}
+
+// handleReauth is the "confirm it's you" step before secrets are shown: the
+// user gives the vault's credentials again, and if they are right this browser
+// session may view QR codes, secrets and exports for verifyWindow.
+func (s *Server) handleReauth(w http.ResponseWriter, r *http.Request, sess *session, _ *vault.Session) {
+	var b unlockBody
+	if !decode(w, r, &b) {
+		return
+	}
+	ip := clientIP(r)
+	if wait := s.limiter.wait(ip); wait > 0 {
+		tooMany(w, wait)
+		return
+	}
+	if err := vault.Verify(s.cfg.VaultPath, b.creds()); err != nil {
+		s.limiter.fail(ip)
+		writeError(w, http.StatusUnauthorized, "That did not match. Check your password or key and try again.")
+		return
+	}
+	s.limiter.ok(ip)
+	sess.markVerified(s.now().Add(verifyWindow))
+	writeJSON(w, http.StatusOK, map[string]any{"verifiedSeconds": int(verifyWindow.Seconds())})
 }
 
 func (s *Server) handleRecover(w http.ResponseWriter, r *http.Request, sess *session) {
@@ -179,8 +218,8 @@ func (s *Server) handleRecover(w http.ResponseWriter, r *http.Request, sess *ses
 	// New credentials are validated before the recovery secrets are checked,
 	// so a form error can never confirm that the secrets were right.
 	setup := vaultcrypto.Setup{Mode: b.Mode, Password: b.Password, SSHPublicKey: b.SSHPublicKey}
-	if err := validateSetup(setup, b.NewRecoveryPassphrase, true); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if msg := validateSetup(setup, b.NewRecoveryPassphrase, true); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 	ip := clientIP(r)

@@ -23,10 +23,29 @@ func (s *Server) api(h func(http.ResponseWriter, *http.Request, *session)) http.
 
 // authed wraps a handler that needs an unlocked vault.
 func (s *Server) authed(h func(http.ResponseWriter, *http.Request, *vault.Session)) http.Handler {
+	return s.authedSession(func(w http.ResponseWriter, r *http.Request, _ *session, v *vault.Session) {
+		h(w, r, v)
+	})
+}
+
+func (s *Server) authedSession(h func(http.ResponseWriter, *http.Request, *session, *vault.Session)) http.Handler {
 	return s.api(func(w http.ResponseWriter, r *http.Request, sess *session) {
 		v := sess.vaultSession()
 		if v == nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "The vault is locked. Unlock it to continue.", "locked": true})
+			return
+		}
+		h(w, r, sess, v)
+	})
+}
+
+// sensitive wraps a handler that reveals secrets (a QR code, the secret, an
+// export). Besides an unlocked vault it needs the user to have confirmed their
+// credentials again within verifyWindow.
+func (s *Server) sensitive(h func(http.ResponseWriter, *http.Request, *vault.Session)) http.Handler {
+	return s.authedSession(func(w http.ResponseWriter, r *http.Request, sess *session, v *vault.Session) {
+		if !sess.verified(s.now()) {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "Confirm it's you to continue.", "reauth": true})
 			return
 		}
 		h(w, r, v)
