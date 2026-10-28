@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/base64"
 	"errors"
+	"google.golang.org/protobuf/encoding/protowire"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -135,5 +138,67 @@ func TestVaultLog_NoSecrets(t *testing.T) {
 		if !strings.Contains(out, action) {
 			t.Errorf("log missing %q:\n%s", action, out)
 		}
+	}
+}
+
+func hotpLink(name string) string {
+	var acct []byte
+	acct = protowire.AppendTag(acct, 1, protowire.BytesType)
+	acct = protowire.AppendBytes(acct, []byte("12345678901234567890"))
+	acct = protowire.AppendTag(acct, 2, protowire.BytesType)
+	acct = protowire.AppendString(acct, name)
+	acct = protowire.AppendTag(acct, 6, protowire.VarintType)
+	acct = protowire.AppendVarint(acct, 1)
+	acct = protowire.AppendTag(acct, 7, protowire.VarintType)
+	acct = protowire.AppendVarint(acct, 4)
+	var payload []byte
+	payload = protowire.AppendTag(payload, 1, protowire.BytesType)
+	payload = protowire.AppendBytes(payload, acct)
+	return "otpauth-migration://offline?data=" + url.QueryEscape(base64.StdEncoding.EncodeToString(payload))
+}
+
+func TestShow_FromVault(t *testing.T) {
+	path := vaultPath(t)
+	initPasswordVault(t, path)
+	scripted(t, pw)
+	runOK(t, "vault", "import", "--vault-path", path, testLink("alice"))
+
+	scripted(t, pw)
+	out := runOK(t, "show", "--vault", "--all", "--vault-path", path)
+	if !strings.Contains(out, "otpauth://totp/alice") {
+		t.Errorf("output:\n%s", out)
+	}
+}
+
+func TestVaultHotpCounterPersists(t *testing.T) {
+	path := vaultPath(t)
+	initPasswordVault(t, path)
+	scripted(t, pw)
+	runOK(t, "vault", "import", "--vault-path", path, hotpLink("hotp"))
+
+	scripted(t, pw)
+	s, key, err := openVault(&vaultFlags{path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recs, err := s.Accounts(key)
+	if err != nil || recs[0].Counter != 4 {
+		t.Fatalf("recs=%+v err=%v", recs, err)
+	}
+	if err := counterSaver(s, recs)(0, 5); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	scripted(t, pw)
+	s, key, err = openVault(&vaultFlags{path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	if recs, _ = s.Accounts(key); recs[0].Counter != 5 {
+		t.Errorf("counter %d, want 5", recs[0].Counter)
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/rutvik24/otp-migration-helper/internal/account"
+	"github.com/rutvik24/otp-migration-helper/internal/migration"
 	"github.com/rutvik24/otp-migration-helper/internal/prompt"
 	"github.com/rutvik24/otp-migration-helper/internal/source"
 	"github.com/rutvik24/otp-migration-helper/internal/store"
@@ -302,4 +304,48 @@ func runVaultLog(args []string, out io.Writer) error {
 		fmt.Fprintf(out, "%s  %s  %s\n", e.Time.Format("2006-01-02 15:04:05"), e.Action, e.Detail)
 	}
 	return nil
+}
+
+// vaultAccounts unlocks the vault and returns it with its accounts. The caller closes the store.
+func vaultAccounts(f *vaultFlags) (*store.Store, []store.Record, error) {
+	s, key, err := openVault(f)
+	if err != nil {
+		return nil, nil, err
+	}
+	recs, err := s.Accounts(key)
+	if err != nil {
+		_ = s.Close()
+		return nil, nil, err
+	}
+	return s, recs, nil
+}
+
+func accountsOf(recs []store.Record) []migration.Account {
+	accounts := make([]migration.Account, len(recs))
+	for i, r := range recs {
+		accounts[i] = r.Account
+	}
+	return accounts
+}
+
+// matching returns the records for the chosen accounts, in the chosen order.
+func matching(recs []store.Record, chosen []migration.Account) []store.Record {
+	var out []store.Record
+	for _, c := range chosen {
+		for _, r := range recs {
+			if r.Issuer == c.Issuer && r.Name == c.Name && bytes.Equal(r.Secret, c.Secret) {
+				out = append(out, r)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// counterSaver returns a live-view callback that saves HOTP counters; index
+// refers to the position in recs.
+func counterSaver(s *store.Store, recs []store.Record) func(int, uint64) error {
+	return func(index int, counter uint64) error {
+		return s.SetCounter(recs[index].ID, counter)
+	}
 }

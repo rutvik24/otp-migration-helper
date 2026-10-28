@@ -6,8 +6,10 @@ import (
 	"io"
 
 	"github.com/rutvik24/otp-migration-helper/internal/account"
+	"github.com/rutvik24/otp-migration-helper/internal/migration"
 	"github.com/rutvik24/otp-migration-helper/internal/qrcode"
 	"github.com/rutvik24/otp-migration-helper/internal/source"
+	"github.com/rutvik24/otp-migration-helper/internal/store"
 	"github.com/rutvik24/otp-migration-helper/internal/tui"
 )
 
@@ -17,19 +19,40 @@ func runShow(args []string, stdin io.Reader, out io.Writer) error {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
 	fs.SetOutput(out)
 	all := fs.Bool("all", false, "show every account without asking")
+	useVault := fs.Bool("vault", false, "read accounts from the vault")
+	vf := addVaultFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	accounts, warnings, err := source.Load(fs.Args(), stdin)
-	if err != nil {
-		return err
+	var accounts []migration.Account
+	var vault *store.Store
+	if *useVault {
+		s, recs, err := vaultAccounts(vf)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = s.Close() }()
+		vault, accounts = s, accountsOf(recs)
+	} else {
+		var warnings []string
+		var err error
+		if accounts, warnings, err = source.Load(fs.Args(), stdin); err != nil {
+			return err
+		}
+		for _, w := range warnings {
+			fmt.Fprintln(out, "warning:", w)
+		}
 	}
-	for _, w := range warnings {
-		fmt.Fprintln(out, "warning:", w)
-	}
+
 	if !*all {
+		var err error
 		if accounts, err = tui.Pick(accounts); err != nil {
+			return err
+		}
+	}
+	if vault != nil {
+		if err := vault.Log("show", fmt.Sprintf("accounts=%d", len(accounts))); err != nil {
 			return err
 		}
 	}

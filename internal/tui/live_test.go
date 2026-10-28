@@ -27,7 +27,7 @@ func clockAt(sec int64) *time.Time {
 }
 
 func newTestLive(now *time.Time, accounts ...migration.Account) live {
-	return newLive(accounts, func() time.Time { return *now })
+	return newLive(accounts, func() time.Time { return *now }, nil)
 }
 
 func TestLive_TotpShowsCodeAndSeconds(t *testing.T) {
@@ -78,4 +78,20 @@ func TestLive_NarrowWidthDoesNotPanic(t *testing.T) {
 	if next.View() == "" {
 		t.Error("empty view")
 	}
+}
+
+func TestLive_OnAdvanceCalled(t *testing.T) {
+	var gotIndex int
+	var gotCounter uint64
+	m := newLive([]migration.Account{totpAccount(), hotpAccount()}, time.Now, func(i int, c uint64) error {
+		gotIndex, gotCounter = i, c
+		return nil
+	})
+	var model tea.Model = m
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if gotIndex != 1 || gotCounter != 1 {
+		t.Errorf("callback got index %d counter %d", gotIndex, gotCounter)
+	}
+	_ = model
 }

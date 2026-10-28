@@ -34,14 +34,17 @@ type live struct {
 	width    int
 	clock    func() time.Time
 	now      time.Time
+	// onAdvance is called after a HOTP counter advances; may be nil.
+	onAdvance func(index int, counter uint64) error
+	err       error
 }
 
-func newLive(accounts []migration.Account, clock func() time.Time) live {
+func newLive(accounts []migration.Account, clock func() time.Time, onAdvance func(int, uint64) error) live {
 	counters := make([]uint64, len(accounts))
 	for i, a := range accounts {
 		counters[i] = a.Counter
 	}
-	return live{accounts: accounts, counters: counters, width: 80, clock: clock, now: clock()}
+	return live{accounts: accounts, counters: counters, width: 80, clock: clock, now: clock(), onAdvance: onAdvance}
 }
 
 func tick() tea.Cmd {
@@ -72,6 +75,9 @@ func (m live) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case hotpAdvanceKey:
 			if m.accounts[m.cursor].Kind == migration.HOTP {
 				m.counters[m.cursor]++
+				if m.onAdvance != nil {
+					m.err = m.onAdvance(m.cursor, m.counters[m.cursor])
+				}
 			}
 		}
 	}
@@ -94,6 +100,9 @@ func (m live) View() string {
 		left := otp.SecondsLeft(m.now, period)
 		b.WriteString(fmt.Sprintf("    %s  %2ds %s\n\n", otp.TOTP(a.Secret, m.now, period, a.Digits, a.Algorithm), left, m.bar(left)))
 	}
+	if m.err != nil {
+		b.WriteString(warnStyle.Render("could not save counter: "+m.err.Error()) + "\n")
+	}
 	return b.String()
 }
 
@@ -112,7 +121,8 @@ func (m live) bar(left int) string {
 }
 
 // Live shows rolling codes full screen until the user presses q.
-func Live(accounts []migration.Account) error {
-	_, err := tea.NewProgram(newLive(accounts, time.Now), tea.WithAltScreen()).Run()
+// onAdvance, if not nil, is told each time a HOTP counter advances.
+func Live(accounts []migration.Account, onAdvance func(index int, counter uint64) error) error {
+	_, err := tea.NewProgram(newLive(accounts, time.Now, onAdvance), tea.WithAltScreen()).Run()
 	return err
 }
