@@ -12,7 +12,7 @@ const usage = `otpmh - migrate Google Authenticator accounts
 Usage:
   otpmh show [--all] [link|image ...]   show URL, secret and QR for accounts
   otpmh live [--all] [link|image ...]   live TOTP/HOTP codes with timers (q quits)
-  otpmh scan [--method capture|shortcut] [--all]   macOS: scan QR codes from the screen
+  otpmh scan [--method capture|file|shortcut] [--all]   macOS: scan on screen, from a Finder file, or via the shortcut
   otpmh install-shortcuts               macOS: add scanning shortcuts to the Shortcuts app
   otpmh vault init|import|list|log     encrypted local vault (see README)
   otpmh gui [--no-open] [--listen ADDR]  open the app in your browser (see README for Docker)
