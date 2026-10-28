@@ -202,3 +202,49 @@ func TestVaultHotpCounterPersists(t *testing.T) {
 		t.Errorf("counter %d, want 5", recs[0].Counter)
 	}
 }
+
+func TestVaultExport_RequiresYes(t *testing.T) {
+	path := vaultPath(t)
+	initPasswordVault(t, path)
+	scripted(t, pw)
+	runOK(t, "vault", "import", "--vault-path", path, testLink("alice"))
+
+	outFile := filepath.Join(t.TempDir(), "export.json")
+	scripted(t, pw)
+	err := run([]string{"vault", "export", "--format", "bitwarden", "--out", outFile, "--vault-path", path}, nil, &strings.Builder{})
+	if err == nil {
+		t.Error("expected error without --yes")
+	}
+	if _, statErr := os.Stat(outFile); statErr == nil {
+		t.Error("file written without --yes")
+	}
+}
+
+func TestVaultExport_FileMode0600(t *testing.T) {
+	path := vaultPath(t)
+	initPasswordVault(t, path)
+	scripted(t, pw)
+	runOK(t, "vault", "import", "--vault-path", path, testLink("alice"))
+
+	outFile := filepath.Join(t.TempDir(), "export.json")
+	scripted(t, pw)
+	runOK(t, "vault", "export", "--format", "bitwarden", "--yes", "--out", outFile, "--vault-path", path)
+	info, err := os.Stat(outFile)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v err %v", info, err)
+	}
+	data, _ := os.ReadFile(outFile)
+	if !strings.Contains(string(data), "otpauth://totp/alice") {
+		t.Errorf("export: %s", data)
+	}
+}
+
+func TestVaultExport_UnknownFormat(t *testing.T) {
+	path := vaultPath(t)
+	initPasswordVault(t, path)
+	scripted(t, pw)
+	err := run([]string{"vault", "export", "--format", "nope", "--yes", "--vault-path", path}, nil, &strings.Builder{})
+	if err == nil {
+		t.Error("expected error")
+	}
+}

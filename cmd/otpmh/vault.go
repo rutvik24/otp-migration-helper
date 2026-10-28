@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/rutvik24/otp-migration-helper/internal/account"
+	"github.com/rutvik24/otp-migration-helper/internal/export"
 	"github.com/rutvik24/otp-migration-helper/internal/migration"
 	"github.com/rutvik24/otp-migration-helper/internal/prompt"
 	"github.com/rutvik24/otp-migration-helper/internal/source"
@@ -31,6 +32,8 @@ func runVault(args []string, stdin io.Reader, out io.Writer) error {
 		return runVaultImport(args[1:], stdin, out)
 	case "list":
 		return runVaultList(args[1:], out)
+	case "export":
+		return runVaultExport(args[1:], out)
 	case "log":
 		return runVaultLog(args[1:], out)
 	default:
@@ -348,4 +351,69 @@ func counterSaver(s *store.Store, recs []store.Record) func(int, uint64) error {
 	return func(index int, counter uint64) error {
 		return s.SetCounter(recs[index].ID, counter)
 	}
+}
+
+func runVaultExport(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("vault export", flag.ContinueOnError)
+	fs.SetOutput(out)
+	f := addVaultFlags(fs)
+	format := fs.String("format", "", "bitwarden, passwords-csv or otpauth")
+	yes := fs.Bool("yes", false, "confirm writing unencrypted secrets")
+	outFile := fs.String("out", "", "write to this new file instead of the terminal")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if !*yes {
+		return errors.New("export is unencrypted: pass --yes to confirm")
+	}
+
+	s, recs, err := vaultAccounts(f)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = s.Close() }()
+	accounts := accountsOf(recs)
+
+	var data []byte
+	switch *format {
+	case "bitwarden":
+		data, err = export.Bitwarden(accounts)
+	case "passwords-csv":
+		data, err = export.PasswordsCSV(accounts)
+	case "otpauth":
+		data = export.OTPAuthList(accounts)
+	default:
+		err = errors.New("--format must be bitwarden, passwords-csv or otpauth")
+	}
+	if err != nil {
+		return err
+	}
+
+	if err := writeExport(*outFile, data, out); err != nil {
+		return err
+	}
+	if err := s.Log("export", fmt.Sprintf("format=%s accounts=%d", *format, len(accounts))); err != nil {
+		return err
+	}
+	if *outFile != "" {
+		fmt.Fprintf(out, "Wrote %d accounts to %s. The file is unencrypted: delete it after importing.\n", len(accounts), *outFile)
+	}
+	return nil
+}
+
+// writeExport writes to a new owner-only file, or to out when path is empty.
+func writeExport(path string, data []byte, out io.Writer) error {
+	if path == "" {
+		_, err := out.Write(data)
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
