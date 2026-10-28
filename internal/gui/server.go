@@ -211,6 +211,13 @@ func (s *Server) Run(ctx context.Context, open func(url string)) error {
 }
 
 func init() {
-	// Go's built-in table has no entry for web fonts.
-	_ = mime.AddExtensionType(".woff2", "font/woff2")
+	// Pin the types so every OS serves the same ones (on Windows Go reads the
+	// registry, which says application/javascript), and add web fonts, which
+	// Go's built-in table lacks.
+	for ext, typ := range map[string]string{
+		".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
+		".svg": "image/svg+xml", ".woff2": "font/woff2",
+	} {
+		_ = mime.AddExtensionType(ext, typ) // only fails for a malformed type, which these are not
+	}
 }

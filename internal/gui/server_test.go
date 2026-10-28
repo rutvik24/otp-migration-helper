@@ -26,6 +26,8 @@ func newLocal(t *testing.T) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Windows cannot delete a vault file that is still open.
+	t.Cleanup(s.sessions.closeAll)
 	return s
 }
 

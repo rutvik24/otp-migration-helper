@@ -162,6 +162,7 @@ func TestCreate_RemoteNeedsSetupCode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(s.sessions.closeAll)
 	c := &client{t: t, s: s}
 	body := map[string]any{"mode": "password", "password": pw, "recoveryPassphrase": recPass}
 	if code, _ := c.json("POST", "/api/vault", body); code != http.StatusForbidden {
