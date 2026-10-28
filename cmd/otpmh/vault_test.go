@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
-	"google.golang.org/protobuf/encoding/protowire"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -12,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"google.golang.org/protobuf/encoding/protowire"
 
 	"github.com/rutvik24/otp-migration-helper/internal/prompt"
 	"github.com/rutvik24/otp-migration-helper/internal/vaultcrypto"

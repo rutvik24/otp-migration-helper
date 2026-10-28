@@ -1,4 +1,4 @@
-Gui # Phase 3: GUI — Design
+# Phase 3: GUI — Design
 
 Builds on phases 1 and 2 (shipped through v0.3.0). Their rules still apply, including the repo `CLAUDE.md` (check every error, close resources, run govulncheck, latest dependencies, anchored `.gitignore`).
 

@@ -9,14 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/rutvik24/otp-migration-helper/internal/account"
-	"github.com/rutvik24/otp-migration-helper/internal/export"
 	"github.com/rutvik24/otp-migration-helper/internal/migration"
 	"github.com/rutvik24/otp-migration-helper/internal/prompt"
 	"github.com/rutvik24/otp-migration-helper/internal/source"
 	"github.com/rutvik24/otp-migration-helper/internal/store"
+	"github.com/rutvik24/otp-migration-helper/internal/vault"
 	"github.com/rutvik24/otp-migration-helper/internal/vaultcrypto"
 )
 
@@ -84,17 +83,9 @@ func runVaultInit(args []string, out io.Writer) error {
 		return err
 	}
 
-	dataKey, err := vaultcrypto.NewDataKey()
-	if err != nil {
-		return err
-	}
-	wrapped, err := vaultcrypto.Wrap(dataKey, setup)
-	if err != nil {
-		return err
-	}
-	recoveryCode := ""
+	recoveryPassphrase := ""
 	if !*noRecovery {
-		if recoveryCode, err = addRecovery(&wrapped, dataKey); err != nil {
+		if recoveryPassphrase, err = askNew("Recovery passphrase (at least 12 characters)"); err != nil {
 			return err
 		}
 	}
@@ -103,15 +94,8 @@ func runVaultInit(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	s, err := store.Create(path, wrapped)
+	recoveryCode, err := vault.Create(path, vault.CreateOptions{Setup: setup, RecoveryPassphrase: recoveryPassphrase, NoRecovery: *noRecovery})
 	if err != nil {
-		return err
-	}
-	defer func() { _ = s.Close() }()
-	if err := s.Log("create", "mode="+*unlock); err != nil {
 		return err
 	}
 
@@ -155,19 +139,6 @@ func collectSetup(unlock, sshKeyPath string) (vaultcrypto.Setup, error) {
 	return setup, nil
 }
 
-// addRecovery prompts for a recovery passphrase and returns the new recovery code.
-func addRecovery(w *vaultcrypto.Wrapped, dataKey []byte) (string, error) {
-	pass, err := askNew("Recovery passphrase (at least 12 characters)")
-	if err != nil {
-		return "", err
-	}
-	code, err := vaultcrypto.NewRecoveryCode()
-	if err != nil {
-		return "", err
-	}
-	return code, vaultcrypto.WrapRecovery(w, dataKey, code, pass)
-}
-
 func askNew(label string) (string, error) {
 	first, err := prompt.Secret(label)
 	if err != nil {
@@ -209,12 +180,11 @@ func unlock(s *store.Store, identity string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	useKey := w.Mode == vaultcrypto.SSH || w.Mode == vaultcrypto.Both || (w.Mode == vaultcrypto.Either && identity != "")
-	usePassword := w.Mode == vaultcrypto.Password || w.Mode == vaultcrypto.Both || (w.Mode == vaultcrypto.Either && identity == "")
+	usePassword, useKey := vault.Needs(w.Mode, identity != "")
 
-	var u vaultcrypto.Unlock
+	creds := vault.Creds{SSHIdentityPath: identity}
 	if usePassword {
-		if u.Password, err = prompt.Secret("Password"); err != nil {
+		if creds.Password, err = prompt.Secret("Password"); err != nil {
 			return nil, err
 		}
 	}
@@ -222,23 +192,12 @@ func unlock(s *store.Store, identity string) ([]byte, error) {
 		if identity == "" {
 			return nil, errors.New("this vault needs --ssh-identity (your SSH private key file)")
 		}
-		if u.SSHPrivateKey, err = os.ReadFile(identity); err != nil {
-			return nil, err
-		}
-		u.SSHPassphrase = func() ([]byte, error) {
+		creds.SSHPassphrase = func() ([]byte, error) {
 			p, err := prompt.Secret("SSH key passphrase")
 			return []byte(p), err
 		}
 	}
-
-	key, err := vaultcrypto.Unwrap(w, u)
-	if err != nil {
-		if logErr := s.Log("unlock_failed", ""); logErr != nil {
-			return nil, logErr
-		}
-		return nil, err
-	}
-	return key, s.Log("unlock", "")
+	return vault.Unlock(s, creds)
 }
 
 func runVaultImport(args []string, stdin io.Reader, out io.Writer) error {
@@ -390,17 +349,7 @@ func runVaultExport(args []string, out io.Writer) error {
 	defer func() { _ = s.Close() }()
 	accounts := accountsOf(recs)
 
-	var data []byte
-	switch *format {
-	case "bitwarden":
-		data, err = export.Bitwarden(accounts)
-	case "passwords-csv":
-		data, err = export.PasswordsCSV(accounts)
-	case "otpauth":
-		data = export.OTPAuthList(accounts)
-	default:
-		err = errors.New("--format must be bitwarden, passwords-csv or otpauth")
-	}
+	data, err := vault.Export(*format, accounts)
 	if err != nil {
 		return err
 	}
@@ -434,8 +383,6 @@ func writeExport(path string, data []byte, out io.Writer) error {
 	return f.Close()
 }
 
-var errRecoveryFailed = errors.New("recovery failed")
-
 // runVaultRecover opens the vault with the recovery code and passphrase and
 // replaces the unlock credentials and recovery secrets. Every failure,
 // including being locked out, returns the same error.
@@ -452,25 +399,6 @@ func runVaultRecover(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	s, err := store.Open(path)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = s.Close() }()
-
-	if _, lockedUntil, err := s.RecoveryState(); err != nil {
-		return err
-	} else if time.Now().Before(lockedUntil) {
-		if err := s.Log("recovery_blocked", ""); err != nil {
-			return err
-		}
-		return errRecoveryFailed
-	}
-
-	wrapped, err := s.Wrapped()
-	if err != nil {
-		return err
-	}
 	code, err := prompt.Secret("Recovery code")
 	if err != nil {
 		return err
@@ -479,41 +407,16 @@ func runVaultRecover(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	oldKey, err := vaultcrypto.UnwrapRecovery(wrapped, code, pass)
-	if err != nil {
-		if err := s.RecordRecoveryFailure(time.Now()); err != nil {
-			return err
-		}
-		if err := s.Log("recovery_failed", ""); err != nil {
-			return err
-		}
-		return errRecoveryFailed
-	}
 
-	setup, err := collectSetup(*unlock, *sshKey)
+	newCode, err := vault.Recover(path, code, pass, func() (vault.NewCredentials, error) {
+		setup, err := collectSetup(*unlock, *sshKey)
+		if err != nil {
+			return vault.NewCredentials{}, err
+		}
+		recoveryPassphrase, err := askNew("Recovery passphrase (at least 12 characters)")
+		return vault.NewCredentials{Setup: setup, RecoveryPassphrase: recoveryPassphrase}, err
+	})
 	if err != nil {
-		return err
-	}
-	// A fresh data key means nothing sealed under the old one stays readable.
-	newKey, err := vaultcrypto.NewDataKey()
-	if err != nil {
-		return err
-	}
-	rewrapped, err := vaultcrypto.Wrap(newKey, setup)
-	if err != nil {
-		return err
-	}
-	newCode, err := addRecovery(&rewrapped, newKey)
-	if err != nil {
-		return err
-	}
-	if err := s.Rekey(oldKey, newKey, rewrapped); err != nil {
-		return err
-	}
-	if err := s.ClearRecoveryFailures(); err != nil {
-		return err
-	}
-	if err := s.Log("recovery", "mode="+*unlock); err != nil {
 		return err
 	}
 	sayln(out, "Vault recovered. Your old recovery code no longer works.")
