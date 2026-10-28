@@ -100,3 +100,13 @@ func TestAssets_LicensesShipWithThirdPartyFiles(t *testing.T) {
 		}
 	}
 }
+
+// replaceChildren treats null and arrays as text ("null", "[object …]"), so
+// every call goes through setChildren, which flattens and skips empty values.
+func TestAssets_NoBareReplaceChildren(t *testing.T) {
+	for name, text := range ownFiles(t) {
+		if path.Ext(name) == ".js" && name != "web/ui.js" && strings.Contains(text, ".replaceChildren(") {
+			t.Errorf("%s calls replaceChildren directly; use setChildren", name)
+		}
+	}
+}

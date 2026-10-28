@@ -358,6 +358,9 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request, v *vault.
 	for _, rec := range recs {
 		saved[accountKey(rec.Account)] = true
 	}
+	if warnings == nil {
+		warnings = []string{}
+	}
 	list := make([]map[string]any, len(accounts))
 	for i, a := range accounts {
 		list[i] = map[string]any{"label": account.Label(a), "kind": kindName(a.Kind), "saved": saved[accountKey(a)]}

@@ -1,6 +1,6 @@
 // Screens shown before the vault is open: create, recovery code, unlock, recover.
 import { api } from "./api.js";
-import { announce, copyText, errorBox, field, h, textInput } from "./ui.js";
+import { announce, copyText, errorBox, field, h, setChildren, textInput } from "./ui.js";
 
 const MODES = [
   ["password", "Password"],
@@ -42,7 +42,7 @@ function newCredentials(initialMode) {
   const publicKey = h("textarea", { class: "input", rows: "3", placeholder: "ssh-ed25519 AAAA… you@laptop" });
 
   function render() {
-    holder.replaceChildren(
+    setChildren(holder, 
       needsPassword(mode) ? [field("Password", password), field("Confirm password", confirm)] : null,
       needsKey(mode) ? field("SSH public key", publicKey, "Paste the whole line from your .pub file, for example ~/.ssh/id_ed25519.pub. To unlock later you will point to the matching private key file.") : null,
     );
@@ -107,7 +107,7 @@ export function showCreate(app, status, { onCreated }) {
     }
   });
 
-  app.replaceChildren(stage(
+  setChildren(app, stage(
     h("h1", null, "Create your vault"),
     h("p", { class: "lede" }, "Your accounts stay on this device, encrypted. Choose how the vault unlocks."),
     form));
@@ -122,7 +122,7 @@ export function showRecoveryCode(app, code, { heading, onDone }) {
     if (await copyText(code)) { copy.textContent = "Copied"; announce("Recovery code copied"); }
   });
 
-  app.replaceChildren(stage(
+  setChildren(app, stage(
     h("h1", null, heading),
     h("p", { class: "lede" }, "This code is shown once. Keep it somewhere safe, apart from your password. To recover the vault you need this code and your recovery passphrase."),
     h("div", { class: "recovery-code", "aria-label": "Recovery code" }, code),
@@ -154,7 +154,7 @@ export function showUnlock(app, status, { onUnlocked, onRecover, notice }) {
       parts.push(field("SSH private key file", keyPath, "The path to your private key on the machine running otpmh."));
       parts.push(field("Key passphrase", keyPass, "Only if your key has one."));
     }
-    holder.replaceChildren(parts);
+    setChildren(holder, parts);
   }
   render();
 
@@ -180,7 +180,7 @@ export function showUnlock(app, status, { onUnlocked, onRecover, notice }) {
     }
   });
 
-  app.replaceChildren(stage(
+  setChildren(app, stage(
     h("h1", null, "Unlock your vault"),
     h("p", { class: "lede" }, "Enter what you chose when you created it."),
     notice ? h("p", { class: "notice" }, notice) : null,
@@ -220,7 +220,7 @@ export function showRecover(app, { onBack, onRecovered }) {
     }
   });
 
-  app.replaceChildren(stage(
+  setChildren(app, stage(
     h("h1", null, "Recover your vault"),
     h("p", { class: "lede" }, "You need the recovery code and the recovery passphrase. Recovery sets new credentials and re-encrypts your accounts."),
     form));

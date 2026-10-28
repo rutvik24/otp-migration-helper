@@ -2,7 +2,7 @@
 // texts, in any order. The server merges them (including multi-QR exports)
 // and the page shows what was found before anything is saved.
 import { api } from "./api.js";
-import { announce, h, openDialog } from "./ui.js";
+import { announce, h, openDialog, setChildren } from "./ui.js";
 import { cameraProblem, startScan } from "./scan.js";
 
 export function openImport({ onSaved }) {
@@ -30,7 +30,10 @@ export function openImport({ onSaved }) {
   // one is rejected on its own without losing the rest.
   async function addTexts(incoming) {
     const fresh = [...new Set(incoming.map((t) => t.trim()).filter(Boolean))].filter((t) => !texts.includes(t));
-    if (fresh.length === 0) return 0;
+    if (fresh.length === 0) {
+      render();
+      return 0;
+    }
     let added = 0;
     for (const text of fresh) {
       try {
@@ -67,11 +70,12 @@ export function openImport({ onSaved }) {
   }
 
   function render() {
+    const warnings = preview.warnings || [];
     const fresh = preview.accounts.filter((a) => !a.saved).length;
     const saved = preview.accounts.length - fresh;
-    found.replaceChildren(
+    setChildren(found, 
       notes.length ? h("p", { class: "error", role: "alert" }, notes.join(" ")) : null,
-      preview.warnings.length ? h("p", { class: "notice" }, preview.warnings.join(". ") + ". Add the missing QR codes, or save what was read.") : null,
+      warnings.length ? h("p", { class: "notice" }, warnings.join(". ") + ". Add the missing QR codes, or save what was read.") : null,
       preview.accounts.length
         ? h("div", null,
             h("h3", null, fresh + (fresh === 1 ? " new account" : " new accounts") + (saved ? ", " + saved + " already saved" : "")),

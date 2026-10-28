@@ -210,6 +210,15 @@ func TestImportPreview_WarnsOnMissingBatch(t *testing.T) {
 	}
 }
 
+func TestImportPreview_EmptyWarningsIsAListNotNull(t *testing.T) {
+	c := newClient(t)
+	c.createAndUnlock()
+	rec := c.req("POST", "/api/import/preview", map[string]any{"texts": []string{totpURI}})
+	if !strings.Contains(rec.Body.String(), `"warnings":[]`) {
+		t.Errorf("warnings must be an empty list: %s", rec.Body.String())
+	}
+}
+
 func TestImportCommit_DedupesAndSaves(t *testing.T) {
 	c := newClient(t)
 	c.createAndUnlock()

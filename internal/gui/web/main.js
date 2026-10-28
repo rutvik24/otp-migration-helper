@@ -1,7 +1,7 @@
 // The main view: account list on the left, the selected account's code on the
 // right, and one shared clock because every TOTP code changes together.
 import { api } from "./api.js";
-import { announce, copyText, groupCode, h, icon, openDialog } from "./ui.js";
+import { announce, copyText, groupCode, h, icon, openDialog, setChildren } from "./ui.js";
 import { themeSwitch } from "./theme.js";
 import { openImport } from "./importer.js";
 
@@ -44,19 +44,19 @@ export function showMain(app, { onLocked }) {
     h("button", { class: "btn", type: "button", onclick: () => openActivity() }, "Activity"),
     h("button", { class: "btn solid", type: "button", onclick: lock }, "Lock"));
 
-  app.replaceChildren(h("div", { class: "app" }, bar, h("div", { class: "body" }, side, focus)));
+  setChildren(app, h("div", { class: "app" }, bar, h("div", { class: "body" }, side, focus)));
 
   const selected = () => state.accounts.find((a) => a.id === state.selectedId) || null;
 
   // ---------- list ----------
   function renderList() {
     if (state.accounts.length === 0) {
-      list.replaceChildren(h("li", { class: "empty" },
+      setChildren(list, h("li", { class: "empty" },
         h("p", null, "No accounts yet."),
         h("button", { class: "btn solid", type: "button", onclick: () => openImport({ onSaved: refresh }) }, "Import accounts")));
       return;
     }
-    list.replaceChildren(state.accounts.map((a) => {
+    setChildren(list, state.accounts.map((a) => {
       const hotp = a.kind === "hotp";
       const done = state.copiedId === a.id;
       const action = hotp
@@ -74,13 +74,13 @@ export function showMain(app, { onLocked }) {
   function renderFocus() {
     const a = selected();
     if (!a) {
-      focus.replaceChildren(h("p", { class: "focus-empty" }, state.accounts.length ? "Choose an account to see its code." : "Import your accounts to see their codes here."));
+      setChildren(focus, h("p", { class: "focus-empty" }, state.accounts.length ? "Choose an account to see its code." : "Import your accounts to see their codes here."));
       rail.hidden = true;
       return;
     }
     const hotp = a.kind === "hotp";
     rail.hidden = hotp;
-    focus.replaceChildren(
+    setChildren(focus, 
       h("p", { class: "issuer" }, a.issuer || a.name),
       a.issuer ? h("p", { class: "name" }, a.name) : null,
       h("p", { class: "code", "aria-label": "Code " + a.code.split("").join(" ") }, groupCode(a.code)),
@@ -185,12 +185,12 @@ export function showMain(app, { onLocked }) {
         const d = await api.get("/api/accounts/" + a.id + "/details");
         const copyLink = h("button", { class: "btn", type: "button" }, "Copy setup link");
         copyLink.addEventListener("click", async () => { if (await copyText(d.url)) copyLink.textContent = "Copied"; });
-        reveal.replaceChildren(
+        setChildren(reveal, 
           h("div", { class: "field" }, h("label", null, "Secret"), h("p", { class: "mono-val" }, d.secret)),
           h("div", { class: "actions" }, copyLink));
         showSecret.hidden = true;
       } catch (e) {
-        reveal.replaceChildren(h("p", { class: "error", role: "alert" }, e.message));
+        setChildren(reveal, h("p", { class: "error", role: "alert" }, e.message));
       }
     });
     openDialog("Add " + (a.issuer || a.name) + " elsewhere", h("div", null,
@@ -255,11 +255,11 @@ export function showMain(app, { onLocked }) {
       const data = await api.get("/api/log");
       const rows = data.entries.slice().reverse().map((e) =>
         h("tr", null, h("td", { class: "when" }, new Date(e.time).toLocaleString()), h("td", null, ACTION_LABELS[e.action] || e.action), h("td", null, e.detail)));
-      body.replaceChildren(
+      setChildren(body, 
         h("p", { class: "hint" }, "A local record of what happened in this vault. It never contains secrets or codes."),
         h("table", { class: "log" }, h("thead", null, h("tr", null, h("th", null, "When"), h("th", null, "What"), h("th", null, "Details"))), h("tbody", null, rows)));
     } catch (e) {
-      body.replaceChildren(h("p", { class: "error", role: "alert" }, e.message));
+      setChildren(body, h("p", { class: "error", role: "alert" }, e.message));
     }
   }
 

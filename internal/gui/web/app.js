@@ -1,12 +1,12 @@
 import { api } from "./api.js";
 import { showCreate, showRecover, showRecoveryCode, showUnlock } from "./auth.js";
 import { showMain } from "./main.js";
-import { h } from "./ui.js";
+import { h, setChildren } from "./ui.js";
 
 const app = document.getElementById("app");
 
 function showFatal(message) {
-  app.replaceChildren(h("div", { class: "stage" }, h("main", { class: "panel" },
+  setChildren(app, h("div", { class: "stage" }, h("main", { class: "panel" },
     h("span", { class: "brand" }, "otpmh"),
     h("h1", null, "Can't continue"),
     h("p", { class: "lede" }, message),

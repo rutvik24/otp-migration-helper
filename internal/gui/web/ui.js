@@ -24,6 +24,12 @@ const ICONS = {
   next: ["M3 8h9M8.5 4l4 4-4 4"],
 };
 
+// setChildren replaces an element's content; arrays are flattened and empty
+// values (null, false) are skipped, unlike the bare DOM method.
+export function setChildren(el, ...children) {
+  el.replaceChildren(...children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false));
+}
+
 export function icon(name) {
   const svg = document.createElementNS(SVG_NS, "svg");
   svg.setAttribute("viewBox", "0 0 16 16");

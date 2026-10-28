@@ -43,7 +43,7 @@ func ReadFile(path string) ([]string, error) {
 func Read(r io.Reader, name string) ([]string, error) {
 	img, _, err := image.Decode(r)
 	if err != nil {
-		return nil, fmt.Errorf("%s: not a readable image: %w", name, err)
+		return nil, fmt.Errorf("%s: not a readable image (use PNG or JPEG)", name)
 	}
 	bmp, err := gozxing.NewBinaryBitmapFromImage(img)
 	if err != nil {
