@@ -14,7 +14,11 @@ Phase 1 forgets everything on exit. Phase 2 lets the user keep their accounts lo
   - `both`: the password and the SSH key are both required.
 - Existing commands read from the vault: `show` and `live` accept `--vault` instead of a link or image.
 - Import into the vault from the same inputs as phase 1 (link, image, macOS scan).
-- Recovery: `vault init` generates a recovery code, shown once, that can open the vault independently of the password and SSH key. `vault recover` uses it to set a new password and/or SSH key and unlock mode. Creation can skip it only with an explicit `--no-recovery`, after a warning that a lost password or key then means a lost vault. Later phases (the GUI) reuse the same recovery path.
+- Recovery that only the owner can complete. `vault init` creates two independent recovery secrets, shown once: a recovery code and a recovery passphrase the owner chooses. `vault recover` needs both. It lets the owner set a new password and/or SSH key and unlock mode, and then issues a new recovery code (the old one stops working). Creation can skip recovery only with an explicit `--no-recovery`, after a warning that a lost password or key then means a lost vault. Later phases (the GUI) reuse this path.
+  - **No doubt, no entry:** recovery succeeds only when both secrets decrypt the vault key and its authentication check passes. Anything less, including a typo, fails the same way with the same generic message ("recovery failed"), with no hint about which part was wrong.
+  - **Guessing is not feasible:** the recovery code carries 160 random bits and goes through a slow key-derivation function, so a wrong guess cannot be brute-forced offline either.
+  - **Slowing abuse:** failed attempts are logged and trigger an increasing delay, then a lockout after 5 failures (24 hours). The lockout is a speed bump, not the protection: someone who copies the file can skip it, but still cannot open the vault without the two secrets.
+  - **After success:** the CLI logs the event, issues new recovery secrets, and shows a notice. Any other unlock credentials stay valid only if the owner keeps them; recovery replaces them.
 - Persist HOTP counters, so `live` advances them across runs.
 - Local activity log (the user's "telemetry"): who/what/when for create, import, show, export, unlock failures. Never secrets or codes. Nothing leaves the machine.
 - Exports, each requiring an explicit confirmation flag because the output is unencrypted:
@@ -33,6 +37,7 @@ Phase 1 forgets everything on exit. Phase 2 lets the user keep their accounts lo
 - Secrets or codes in logs, error messages, or temp files.
 - Silently writing a plaintext export.
 - Inventing a cipher or key-derivation scheme.
+- Any recovery path that opens the vault on a partial or probable match, or that explains why an attempt failed.
 
 ## Constraints
 - Go, pure-Go SQLite driver so cross-platform builds keep working without CGO.
@@ -46,7 +51,7 @@ Unlock modes password / ssh / either / both, chosen at creation; SSH keys with p
 
 ## Builder's calls (mine; adjust freely)
 - **Password handling (correction to the request):** TOTP/HOTP secrets must be readable to produce codes, so they cannot be stored as one-way hashes the way bcrypt stores passwords. Instead the password goes through a slow, memory-hard key-derivation function (age's scrypt) to produce the key that encrypts the data key. bcrypt is a password hash, not a key-derivation function (72-byte input limit, no key output), so I did not use it. Argon2id is the alternative if you prefer it.
-- **Recovery code:** 160 random bits shown as grouped base32. It is a further wrapper of the data key, stored like the other unlock methods.
+- **Recovery secrets:** a 160-bit random recovery code (grouped base32) plus an owner-chosen recovery passphrase. Like `both` unlock mode, the data key is wrapped by one and the result is encrypted with the other, so both are required. A recovery passphrase has a minimum length, and the CLI rejects trivially weak ones.
 - **Encryption:** the `age` format (filippo.io/age): a random data key encrypts each secret; the data key is wrapped using age. `password` uses age's passphrase mode; `ssh` uses age's SSH recipients and identities (including passphrase-protected keys); `either` stores two wrapped copies of the data key; `both` wraps the data key for the SSH key first and then encrypts that result with the password.
 - **Commands:** `otpmh vault init --unlock password|ssh|either|both [--ssh-key PATH]`, `vault import [inputs…]`, `vault list`, `vault export --format bitwarden|passwords-csv|otpauth --yes`, `vault log`; and `--vault` on `show` and `live`.
 - **Log storage:** an `activity_log` table in the same database.
