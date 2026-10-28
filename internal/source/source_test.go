@@ -127,3 +127,27 @@ func TestLoad_UnsupportedInputs(t *testing.T) {
 		t.Errorf("QR with unrelated text: %v", err)
 	}
 }
+
+func TestPreview_MixedTextsAnyOrder(t *testing.T) {
+	accts, warns, err := Preview([]string{soloURI, link(7, 2, 1, "b"), link(7, 2, 0, "a")})
+	if err != nil || len(accts) != 3 || len(warns) != 0 {
+		t.Fatalf("accts=%d warns=%v err=%v", len(accts), warns, err)
+	}
+}
+
+func TestPreview_WarnsOnMissingBatch(t *testing.T) {
+	_, warns, err := Preview([]string{link(7, 3, 0, "a")})
+	if err != nil || len(warns) != 2 {
+		t.Fatalf("warns=%v err=%v", warns, err)
+	}
+}
+
+func TestPreview_RejectsFilePaths(t *testing.T) {
+	path := writeQR(t, soloURI)
+	if _, _, err := Preview([]string{path}); err == nil {
+		t.Error("a file path must never be read by Preview")
+	}
+	if _, _, err := Preview(nil); err == nil {
+		t.Error("expected error for no input")
+	}
+}

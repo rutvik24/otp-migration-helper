@@ -39,7 +39,20 @@ func Load(inputs []string, stdin io.Reader) ([]migration.Account, []string, erro
 	if err != nil {
 		return nil, nil, err
 	}
+	return collect(texts)
+}
 
+// Preview decodes already-read QR texts (migration links and otpauth URIs)
+// into accounts, merging batches and reporting missing QR codes. It never
+// reads files, so it is safe to feed with text from a network client.
+func Preview(texts []string) ([]migration.Account, []string, error) {
+	if len(texts) == 0 {
+		return nil, nil, errors.New("no QR text provided")
+	}
+	return collect(texts)
+}
+
+func collect(texts []string) ([]migration.Account, []string, error) {
 	c := collector{seen: map[string]bool{}, batches: map[int32]*batchState{}}
 	for _, text := range texts {
 		if err := c.add(text); err != nil {
