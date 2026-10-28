@@ -47,7 +47,7 @@ Keep your accounts locally instead of re-importing the Google export each time. 
 
 Unlock modes: `password`; `ssh` (an SSH key, passphrase-protected keys work); `either` (password or key); `both` (password and key). Unlock with an SSH key by adding `--ssh-identity ~/.ssh/id_ed25519` (the private key file). Passwords and passphrases are typed at a hidden prompt, never on the command line.
 
-The vault lives at `<user config dir>/otpmh/vault.db` (override with `--vault-path`), file mode 0600.
+The vault lives at `<user config dir>/otpmh/vault.db` (override with `--vault-path`), file mode 0600 (Windows does not use Unix modes; keep the vault in your user profile).
 
 ### Recovery
 

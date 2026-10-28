@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -221,6 +222,9 @@ func TestVaultExport_RequiresYes(t *testing.T) {
 }
 
 func TestVaultExport_FileMode0600(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file modes are not supported on Windows")
+	}
 	path := vaultPath(t)
 	initPasswordVault(t, path)
 	scripted(t, pw)

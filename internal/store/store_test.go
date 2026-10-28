@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -34,6 +35,9 @@ func account(name string) migration.Account {
 }
 
 func TestCreate_Mode0600(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file modes are not supported on Windows")
+	}
 	_, path, _ := newStore(t)
 	info, err := os.Stat(path)
 	if err != nil || info.Mode().Perm() != 0o600 {
