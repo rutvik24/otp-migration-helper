@@ -3,3 +3,4 @@
 .superpowers/
 .idea/
 qodana.yaml
+/.playwright-mcp/
