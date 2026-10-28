@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"mime"
 	"net"
 	"net/http"
 	"strconv"
@@ -202,4 +203,9 @@ func (s *Server) Run(ctx context.Context, open func(url string)) error {
 	err = srv.Shutdown(shutdownCtx)
 	s.sessions.closeAll()
 	return err
+}
+
+func init() {
+	// Go's built-in table has no entry for web fonts.
+	_ = mime.AddExtensionType(".woff2", "font/woff2")
 }
