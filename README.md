@@ -77,7 +77,7 @@ Opens otpmh in your browser at a private local address (only this computer can r
 
 - Create, unlock (password, SSH key, either, or both), recover, lock. It locks itself after 5 minutes without use.
 - Import by dropping QR images, **scanning with your webcam**, or pasting decoded text (`otpauth-migration://` links and `otpauth://` URIs), in any order. Multi-QR exports are merged and missing codes are reported before anything is saved.
-- Show a QR code for another authenticator app, export for Bitwarden or other managers, and see the activity log.
+- Show a QR code for another authenticator app, export for Bitwarden or other managers, and see the activity log. Before a QR code, a secret or an export is shown, you confirm your credentials again (good for 2 minutes), so someone at an unlocked screen cannot just read them out.
 - Light, Dark, or System (the default; it follows your operating system).
 
 Nothing is loaded from the internet: fonts, scripts and the QR decoder are all part of the program. Camera access needs `localhost` or HTTPS.
@@ -107,9 +107,23 @@ The server refuses to start over plain HTTP unless you opt in. In this mode the 
 | `OTPMH_ALLOWED_HOSTS` | Comma-separated host names the server answers to |
 | `OTPMH_TLS_CERT`, `OTPMH_TLS_KEY` | Serve HTTPS directly |
 
-Passwords are never read from environment variables. To unlock with an SSH key, mount the key read-only (for example `-v ~/.ssh/id_ed25519:/keys/id:ro`) and enter `/keys/id` as the key path.
+Passwords are never read from environment variables. To unlock with an SSH key in the web app, upload the key file or paste its text (plus its passphrase, if it has one). The key travels with the request, is used once, and is never saved; the server does not read key files from its own disk, so nothing needs mounting.
 
 The image is a single static binary on an empty base (about 23 MB), runs as a non-root user, and has a built-in health check. GitHub creates new packages as private: after the first release, set the package to public once under the repository's Packages settings.
+
+## Databases for self-hosting
+
+By default the vault is a SQLite file. To keep it in **PostgreSQL** or **MySQL** (MariaDB works too) instead, point otpmh at the database:
+
+    export OTPMH_DATABASE_URL='postgres://otpmh:PASSWORD@db.example:5432/otpmh?sslmode=require'
+    # or: mysql://otpmh:PASSWORD@db.example:3306/otpmh?tls=true
+    otpmh gui          # also works for `otpmh vault ...`
+
+Use an empty database and a user that may create tables. otpmh creates its four tables on first use. The URL holds the database password, so prefer the environment, or a file named by `OTPMH_DATABASE_URL_FILE` (for Docker secrets), over the `--database-url` flag, which is visible in the process list. Flags win over the environment, then `OTPMH_DATABASE_URL`, then `OTPMH_DATABASE_URL_FILE`, then `OTPMH_VAULT_PATH`, then the default SQLite file.
+
+Secrets are encrypted by otpmh before they reach any database, so whoever runs the database sees only ciphertext, names and issuers, and the activity log. Ready-to-use Compose files are in [`examples/`](examples): `docker compose -f examples/docker-compose.postgres.yml up -d` (or `.mysql.yml`) starts otpmh and its database, with the database password kept in Docker secrets.
+
+To move an existing vault between databases, export it (`otpmh vault export`) and import into the new one.
 
 ## Development
 

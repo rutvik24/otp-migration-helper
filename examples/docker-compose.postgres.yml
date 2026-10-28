@@ -1,0 +1,50 @@
+# otpmh with its vault in PostgreSQL.
+#
+#   mkdir -p secrets
+#   openssl rand -hex 24 > secrets/db_password.txt
+#   printf 'postgres://otpmh:%s@db:5432/otpmh?sslmode=disable' "$(cat secrets/db_password.txt)" > secrets/otpmh_database_url.txt
+#   docker compose -f docker-compose.postgres.yml up -d
+#   docker compose -f docker-compose.postgres.yml logs otpmh   # shows the one-time setup code
+#
+# Then open http://127.0.0.1:8080. Secrets are encrypted by otpmh before they reach the
+# database, so the database only ever holds ciphertext.
+services:
+  otpmh:
+    image: ${OTPMH_IMAGE:-ghcr.io/rutvik24/otp-migration-helper:latest}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080" # published to this machine only; put HTTPS in front to share it
+    environment:
+      OTPMH_INSECURE_HTTP: "true" # TLS ends at your proxy, or the port above is loopback-only
+      OTPMH_DATABASE_URL_FILE: /run/secrets/otpmh_database_url
+    secrets:
+      - otpmh_database_url
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: otpmh
+      POSTGRES_USER: otpmh
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U otpmh -d otpmh"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  otpmh_database_url:
+    file: ./secrets/otpmh_database_url.txt
+
+volumes:
+  dbdata:

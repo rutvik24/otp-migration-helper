@@ -28,6 +28,51 @@ jobs:
           go-version-file: go.mod
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+  # The vault runs on real PostgreSQL and MySQL servers, not mocks. One package
+  # at a time (-p 1) because the packages share the same test databases.
+  databases:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: pgpass
+          POSTGRES_DB: otpmh
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      mysql:
+        image: mysql:9
+        env:
+          MYSQL_ROOT_PASSWORD: mypass
+          MYSQL_DATABASE: otpmh
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pmypass --silent"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      OTPMH_TEST_POSTGRES_URL: postgres://postgres:pgpass@127.0.0.1:5432/otpmh?sslmode=disable
+      OTPMH_TEST_MYSQL_URL: mysql://root:mypass@127.0.0.1:3306/otpmh
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go test -p 1 ./...
+
+  # A syntax error in a script takes the whole page down and only a browser
+  # would notice, so every script is parsed here.
+  web-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Parse every script
+        run: |
+          for f in internal/gui/web/*.js; do
+            node --input-type=module --check < "$f" || { echo "syntax error in $f"; exit 1; }
+          done
+
   # Every platform the release and the container image target must compile
   # (32-bit targets once failed on an integer that did not fit).
   cross-build:

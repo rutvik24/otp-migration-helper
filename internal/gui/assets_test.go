@@ -110,3 +110,22 @@ func TestAssets_NoBareReplaceChildren(t *testing.T) {
 		}
 	}
 }
+
+// A duplicated top-level function is a syntax error that only a browser would
+// notice, and it takes the whole page down.
+func TestAssets_NoDuplicateTopLevelDeclarations(t *testing.T) {
+	decl := regexp.MustCompile(`(?m)^(?:export )?(?:async )?function (\w+)|^(?:export )?const (\w+) =`)
+	for name, text := range ownFiles(t) {
+		if path.Ext(name) != ".js" {
+			continue
+		}
+		seen := map[string]bool{}
+		for _, m := range decl.FindAllStringSubmatch(text, -1) {
+			id := m[1] + m[2]
+			if seen[id] {
+				t.Errorf("%s declares %s twice", name, id)
+			}
+			seen[id] = true
+		}
+	}
+}

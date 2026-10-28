@@ -1,6 +1,7 @@
 // Screens shown before the vault is open: create, recovery code, unlock, recover.
 import { api } from "./api.js";
 import { announce, copyText, errorBox, field, h, setChildren, textInput } from "./ui.js";
+import { credentialFields } from "./verify.js";
 
 const MODES = [
   ["password", "Password"],
@@ -40,11 +41,16 @@ function newCredentials(initialMode) {
   const password = textInput({ type: "password", autocomplete: "new-password" });
   const confirm = textInput({ type: "password", autocomplete: "new-password" });
   const publicKey = h("textarea", { class: "input", rows: "3", placeholder: "ssh-ed25519 AAAA… you@laptop" });
+  const pubFile = h("input", { type: "file", class: "sr-only", id: "pub-file", accept: ".pub,text/plain" });
+  pubFile.addEventListener("change", async () => {
+    if (pubFile.files[0]) publicKey.value = (await pubFile.files[0].text()).trim();
+    pubFile.value = "";
+  });
 
   function render() {
     setChildren(holder, 
       needsPassword(mode) ? [field("Password", password), field("Confirm password", confirm)] : null,
-      needsKey(mode) ? field("SSH public key", publicKey, "Paste the whole line from your .pub file, for example ~/.ssh/id_ed25519.pub. To unlock later you will point to the matching private key file.") : null,
+      needsKey(mode) ? [field("SSH public key", publicKey, "Paste the whole line from your .pub file (for example ~/.ssh/id_ed25519.pub), or upload the file. To unlock later you will upload or paste the matching private key."), h("div", { class: "actions tight" }, h("label", { class: "btn", for: "pub-file" }, "Upload .pub file"), pubFile)] : null,
     );
   }
   render();
@@ -132,46 +138,19 @@ export function showRecoveryCode(app, code, { heading, onDone }) {
 }
 
 export function showUnlock(app, status, { onUnlocked, onRecover, notice }) {
-  const mode = status.mode;
-  let useKey = mode === "ssh" || mode === "both";
-  const holder = h("div");
-  const password = textInput({ type: "password", autocomplete: "current-password" });
-  const keyPath = textInput({ placeholder: "~/.ssh/id_ed25519" });
-  const keyPass = textInput({ type: "password", autocomplete: "off" });
+  const creds = credentialFields(status.mode);
   const error = errorBox();
   const submit = h("button", { class: "btn solid big", type: "submit" }, "Unlock");
 
-  function render() {
-    const parts = [];
-    if (mode === "either") {
-      const name = "via-" + Math.random().toString(36).slice(2, 7);
-      parts.push(h("fieldset", null, h("legend", null, "Unlock with"), h("div", { class: "seg" },
-        h("label", null, h("input", { type: "radio", name, checked: !useKey, onchange: () => { useKey = false; render(); } }), h("span", null, "Password")),
-        h("label", null, h("input", { type: "radio", name, checked: useKey, onchange: () => { useKey = true; render(); } }), h("span", null, "SSH key")))));
-    }
-    if (mode === "password" || mode === "both" || (mode === "either" && !useKey)) parts.push(field("Password", password));
-    if (mode === "ssh" || mode === "both" || (mode === "either" && useKey)) {
-      parts.push(field("SSH private key file", keyPath, "The path to your private key on the machine running otpmh."));
-      parts.push(field("Key passphrase", keyPass, "Only if your key has one."));
-    }
-    setChildren(holder, parts);
-  }
-  render();
-
-  const form = h("form", { novalidate: true }, holder, error,
+  const form = h("form", { novalidate: true }, creds.root, error,
     h("div", { class: "actions" }, submit, h("button", { class: "btn link", type: "button", onclick: onRecover }, "Forgot your password or key?")));
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     error.clear();
     submit.disabled = true;
     try {
-      await api.post("/api/unlock", {
-        password: password.value,
-        sshIdentityPath: useKey ? keyPath.value : "",
-        sshPassphrase: useKey ? keyPass.value : "",
-      });
-      password.value = "";
-      keyPass.value = "";
+      await api.post("/api/unlock", creds.values());
+      creds.clear();
       onUnlocked();
     } catch (e) {
       error.show(e.message);
@@ -185,7 +164,7 @@ export function showUnlock(app, status, { onUnlocked, onRecover, notice }) {
     h("p", { class: "lede" }, "Enter what you chose when you created it."),
     notice ? h("p", { class: "notice" }, notice) : null,
     form));
-  (password.isConnected ? password : keyPath).focus();
+  creds.focus();
 }
 
 export function showRecover(app, { onBack, onRecovered }) {

@@ -26,7 +26,7 @@ async function route(options = {}) {
   } else if (!status.unlocked) {
     showUnlock(app, status, { onUnlocked: () => route(), onRecover: recover, notice: options.notice });
   } else {
-    showMain(app, { onLocked: (notice) => route({ notice }) });
+    showMain(app, { mode: status.mode, onLocked: (notice) => route({ notice }) });
   }
 }
 

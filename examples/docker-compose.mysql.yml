@@ -1,0 +1,50 @@
+# otpmh with its vault in MySQL (MariaDB works the same way).
+#
+#   mkdir -p secrets
+#   openssl rand -hex 24 > secrets/db_password.txt
+#   printf 'mysql://otpmh:%s@db:3306/otpmh' "$(cat secrets/db_password.txt)" > secrets/otpmh_database_url.txt
+#   docker compose -f docker-compose.mysql.yml up -d
+#   docker compose -f docker-compose.mysql.yml logs otpmh   # shows the one-time setup code
+#
+# Then open http://127.0.0.1:8080.
+services:
+  otpmh:
+    image: ${OTPMH_IMAGE:-ghcr.io/rutvik24/otp-migration-helper:latest}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      OTPMH_INSECURE_HTTP: "true"
+      OTPMH_DATABASE_URL_FILE: /run/secrets/otpmh_database_url
+    secrets:
+      - otpmh_database_url
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: mysql:9
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: otpmh
+      MYSQL_USER: otpmh
+      MYSQL_PASSWORD_FILE: /run/secrets/db_password
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+    secrets:
+      - db_password
+    volumes:
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uotpmh -p$$(cat /run/secrets/db_password) --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  otpmh_database_url:
+    file: ./secrets/otpmh_database_url.txt
+
+volumes:
+  dbdata:

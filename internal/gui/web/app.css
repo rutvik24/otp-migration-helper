@@ -220,3 +220,10 @@ table.log td.when { color: var(--ink-2); white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+.label-like { font-size: 14px; font-weight: 600; }
+.actions.tight { margin-top: 0; }
+.keybox textarea.input { min-height: 96px; }
+/* A pasted private key is blurred until the field is focused, so it is not left readable on screen. */
+.keybox textarea.input { filter: blur(4px); transition: filter 0.15s; }
+.keybox textarea.input:focus { filter: none; }

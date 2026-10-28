@@ -41,4 +41,5 @@ export const api = {
   post: (path, body) => json("POST", path, body === undefined ? {} : body),
   upload: (path, form) => json("POST", path, form),
   blob: async (path, body) => (await request("POST", path, body)).blob(),
+  getBlob: async (path) => (await request("GET", path)).blob(),
 };

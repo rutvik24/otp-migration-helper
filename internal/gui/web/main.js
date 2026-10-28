@@ -4,6 +4,7 @@ import { api } from "./api.js";
 import { announce, copyText, groupCode, h, icon, openDialog, setChildren } from "./ui.js";
 import { themeSwitch } from "./theme.js";
 import { openImport } from "./importer.js";
+import { withVerification } from "./verify.js";
 
 const PERIOD = 30;
 const WARN_SECONDS = 5;
@@ -11,7 +12,7 @@ const IDLE_LOCK_MS = 5 * 60 * 1000;
 const COPIED_MS = 2000;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
-export function showMain(app, { onLocked }) {
+export function showMain(app, { mode, onLocked }) {
   const state = { accounts: [], selectedId: null, deadline: 0, copiedId: null, refreshing: false };
   let copiedTimer = 0;
   let warnTimer = 0;
@@ -176,16 +177,25 @@ export function showMain(app, { onLocked }) {
   }
 
   // ---------- dialogs ----------
-  function openQR(a) {
-    const img = h("img", { src: "/api/accounts/" + a.id + "/qr.png", alt: "QR code to add " + a.label + " to another authenticator app", width: "300", height: "300" });
+  async function openQR(a) {
+    let imageUrl;
+    try {
+      const blob = await withVerification(mode, () => api.getBlob("/api/accounts/" + a.id + "/qr.png"));
+      imageUrl = URL.createObjectURL(blob);
+    } catch (e) {
+      announce(e.message);
+      meta.textContent = e.message;
+      return;
+    }
+    const img = h("img", { src: imageUrl, alt: "QR code to add " + a.label + " to another authenticator app", width: "300", height: "300" });
     const reveal = h("div");
     const showSecret = h("button", { class: "btn", type: "button" }, "Show secret and setup link");
     showSecret.addEventListener("click", async () => {
       try {
-        const d = await api.get("/api/accounts/" + a.id + "/details");
+        const d = await withVerification(mode, () => api.get("/api/accounts/" + a.id + "/details"));
         const copyLink = h("button", { class: "btn", type: "button" }, "Copy setup link");
         copyLink.addEventListener("click", async () => { if (await copyText(d.url)) copyLink.textContent = "Copied"; });
-        setChildren(reveal, 
+        setChildren(reveal,
           h("div", { class: "field" }, h("label", null, "Secret"), h("p", { class: "mono-val" }, d.secret)),
           h("div", { class: "actions" }, copyLink));
         showSecret.hidden = true;
@@ -197,7 +207,7 @@ export function showMain(app, { onLocked }) {
       h("p", { class: "hint" }, "Scan this with another authenticator app. Anyone who can see it can create your codes, so close this when you are done."),
       h("div", { class: "qr-box" }, img),
       h("div", { class: "actions" }, showSecret),
-      reveal));
+      reveal), { onClose: () => URL.revokeObjectURL(imageUrl) });
   }
 
   const EXPORTS = [
@@ -216,7 +226,7 @@ export function showMain(app, { onLocked }) {
     go.addEventListener("click", async () => {
       error.hidden = true;
       try {
-        const blob = await api.blob("/api/export", { format: chosen.value, confirm: true });
+        const blob = await withVerification(mode, () => api.blob("/api/export", { format: chosen.value, confirm: true }));
         const link = h("a", { href: URL.createObjectURL(blob), download: fileName(chosen.value) });
         document.body.append(link);
         link.click();
