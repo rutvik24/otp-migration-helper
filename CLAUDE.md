@@ -20,4 +20,14 @@ Qodana (GoLand) flags these on this repo; do not introduce them.
   - Check with `go list -m -u all`.
 - **Never ignore source by bare name.** In `.gitignore`, anchor binaries and build output (`/otpmh`, `/dist/`). A bare `otpmh` also hid `cmd/otpmh`. After adding files, check `git status` shows every new package.
 
+- **The web interface stays offline and honest.**
+  - Everything (fonts, scripts, the QR decoder) is embedded; no CDN, no external URL. `internal/gui/assets_test.go` enforces this and the strict Content-Security-Policy (no inline scripts or styles, no `innerHTML`).
+  - The interface never shows the text "GUI". The app is just called otpmh.
+  - Build DOM with `h()` and `setChildren()`, never the bare `replaceChildren` (it turns `null` and arrays into text).
+  - Return empty lists as `[]`, not `null`, from the JSON API.
+  - Interface copy: sentence case, active voice, specific buttons ("Copy code", "Copied"), errors say what happened and what to do.
+  - Check UI changes in a real browser (Playwright), light and dark and phone width, before claiming they work.
+- **Every platform must compile.** Releases and the container image target amd64, arm64, arm/v7, arm/v6, 386, ppc64le, s390x, riscv64 (plus Windows, macOS, FreeBSD). Keep integer constants and sizes portable (use `int64` for values above 2^31). CI's `cross-build` job checks this.
+- **Verify the right CI run.** After pushing, wait for the run whose `headSha` equals `git rev-parse HEAD`; do not trust the latest run in the list.
+
 Before pushing: `go vet ./... && go test ./...` plus the govulncheck command above, all clean.

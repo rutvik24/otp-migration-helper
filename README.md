@@ -69,6 +69,48 @@ Any wrong or partial answer fails with the same message, and five failures lock 
 
 Exports are **unencrypted**, so `--yes` is required. Delete the file after importing it.
 
+## Web app
+
+    otpmh gui
+
+Opens otpmh in your browser at a private local address (only this computer can reach it; the link works once). It has everything the command line has, in the Focus layout: your accounts on the left with a Copy button on every row, the selected account's live code on the right, and one shared clock because every code changes together.
+
+- Create, unlock (password, SSH key, either, or both), recover, lock. It locks itself after 5 minutes without use.
+- Import by dropping QR images, **scanning with your webcam**, or pasting decoded text (`otpauth-migration://` links and `otpauth://` URIs), in any order. Multi-QR exports are merged and missing codes are reported before anything is saved.
+- Show a QR code for another authenticator app, export for Bitwarden or other managers, and see the activity log.
+- Light, Dark, or System (the default; it follows your operating system).
+
+Nothing is loaded from the internet: fonts, scripts and the QR decoder are all part of the program. Camera access needs `localhost` or HTTPS.
+
+## Docker and self-hosting
+
+Images for every common CPU (amd64, arm64, arm/v7, arm/v6, 386, ppc64le, s390x, riscv64) are published to GitHub Container Registry:
+
+    docker run -d --name otpmh -p 127.0.0.1:8080:8080 \
+      -v otpmh-data:/data -e OTPMH_INSECURE_HTTP=true \
+      ghcr.io/rutvik24/otp-migration-helper
+
+Then open http://127.0.0.1:8080. On first start the container prints a one-time **setup code** (`docker logs otpmh`) that you enter when creating the vault; nobody who merely reaches the page can claim an empty server. Your vault lives in the `/data` volume.
+
+`-p 127.0.0.1:8080:8080` publishes the port to this computer only, which is why plain HTTP is acceptable here. To use it from other devices, put it behind HTTPS instead:
+
+- Behind a reverse proxy that terminates TLS: keep `OTPMH_INSECURE_HTTP=true`, publish the port only to the proxy, and set `OTPMH_ALLOWED_HOSTS=otp.example.com`.
+- Or let it serve HTTPS itself: mount a certificate and key and set `OTPMH_TLS_CERT=/certs/fullchain.pem` and `OTPMH_TLS_KEY=/certs/privkey.pem` (no `OTPMH_INSECURE_HTTP`).
+
+The server refuses to start over plain HTTP unless you opt in. In this mode the vault's own unlock is the login, wrong attempts are slowed and then blocked, and every outcome is written to the activity log. Browsers allow the webcam only on `localhost` or HTTPS; uploading images and pasting text work anywhere.
+
+| Setting | Meaning |
+| --- | --- |
+| `OTPMH_LISTEN` | Address to listen on (the image sets `:8080`) |
+| `OTPMH_VAULT_PATH` | Vault file (the image sets `/data/vault.db`) |
+| `OTPMH_INSECURE_HTTP` | `true` to allow plain HTTP (TLS at a proxy, or loopback-only port) |
+| `OTPMH_ALLOWED_HOSTS` | Comma-separated host names the server answers to |
+| `OTPMH_TLS_CERT`, `OTPMH_TLS_KEY` | Serve HTTPS directly |
+
+Passwords are never read from environment variables. To unlock with an SSH key, mount the key read-only (for example `-v ~/.ssh/id_ed25519:/keys/id:ro`) and enter `/keys/id` as the key path.
+
+The image is a single static binary on an empty base (about 23 MB), runs as a non-root user, and has a built-in health check. GitHub creates new packages as private: after the first release, set the package to public once under the repository's Packages settings.
+
 ## Development
 
     go vet ./... && go test ./...

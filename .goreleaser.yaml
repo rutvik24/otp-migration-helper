@@ -5,8 +5,39 @@ builds:
     binary: otpmh
     env:
       - CGO_ENABLED=0
-    goos: [darwin, linux, windows]
-    goarch: [amd64, arm64]
+    goos: [darwin, linux, windows, freebsd]
+    goarch: [amd64, arm64, "386", arm, ppc64le, s390x, riscv64]
+    goarm: ["6", "7"]
+    ignore:
+      # Only the platforms that actually exist.
+      - goos: darwin
+        goarch: "386"
+      - goos: darwin
+        goarch: arm
+      - goos: darwin
+        goarch: ppc64le
+      - goos: darwin
+        goarch: s390x
+      - goos: darwin
+        goarch: riscv64
+      - goos: windows
+        goarch: arm
+      - goos: windows
+        goarch: ppc64le
+      - goos: windows
+        goarch: s390x
+      - goos: windows
+        goarch: riscv64
+      - goos: freebsd
+        goarch: "386"
+      - goos: freebsd
+        goarch: arm
+      - goos: freebsd
+        goarch: ppc64le
+      - goos: freebsd
+        goarch: s390x
+      - goos: freebsd
+        goarch: riscv64
 
 archives:
   - formats: [tar.gz]

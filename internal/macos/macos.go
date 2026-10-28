@@ -82,14 +82,14 @@ type shortcutFile struct {
 	WFWorkflowTypes                   []string
 	WFWorkflowImportQuestions         []any
 	WFWorkflowInputContentItemClasses []string
-	WFWorkflowIcon                    map[string]int
+	WFWorkflowIcon                    map[string]int64
 }
 
 func newShortcut(actions ...action) shortcutFile {
 	return shortcutFile{
 		WFWorkflowActions:         actions,
 		WFWorkflowClientVersion:   "900",
-		WFWorkflowIcon:            map[string]int{"WFWorkflowIconStartColor": 4282601983, "WFWorkflowIconGlyphNumber": 59511},
+		WFWorkflowIcon:            map[string]int64{"WFWorkflowIconStartColor": 4282601983, "WFWorkflowIconGlyphNumber": 59511},
 		WFWorkflowTypes:           []string{},
 		WFWorkflowImportQuestions: []any{},
 	}
