@@ -11,6 +11,10 @@ Qodana (GoLand) flags these on this repo; do not introduce them.
 - **Vulnerable dependencies (`VulnerableLibrariesLocal`).**
   - Before committing a dependency change, run `go run golang.org/x/vuln/cmd/govulncheck@latest ./...` and upgrade until it reports none. This includes indirect modules and the Go standard library version in `go.mod`.
   - After `go get`, run `go get <indirect module>@latest` for any flagged indirect module, then `go mod tidy`.
+- **Always use the latest dependency versions.**
+  - Add dependencies with `@latest`, and run `go get -u ./... && go mod tidy` before each push.
+  - Pin an older version only when strictly required (a newer one breaks the build or API). Record why in a comment next to the `require` line in `go.mod`.
+  - Check with `go list -m -u all`.
 - **Never ignore source by bare name.** In `.gitignore`, anchor binaries and build output (`/otpmh`, `/dist/`). A bare `otpmh` also hid `cmd/otpmh`. After adding files, check `git status` shows every new package.
 
 Before pushing: `go vet ./... && go test ./...` plus the govulncheck command above, all clean.
