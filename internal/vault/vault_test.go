@@ -250,3 +250,62 @@ func TestLogsNeverContainSecrets(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenWithKeyText(t *testing.T) {
+	k := newKeyFiles(t, "key-pass")
+	path := vaultPath(t)
+	if _, err := Create(path, CreateOptions{Setup: vaultcrypto.Setup{Mode: vaultcrypto.SSH, SSHPublicKey: readFile(t, k.pub)}, NoRecovery: true}); err != nil {
+		t.Fatal(err)
+	}
+	pass := func() ([]byte, error) { return []byte("key-pass"), nil }
+	s, err := Open(path, Creds{SSHPrivateKey: []byte(readFile(t, k.identity)), SSHPassphrase: pass})
+	if err != nil {
+		t.Fatalf("pasted key text should unlock: %v", err)
+	}
+	_ = s.Close()
+	if _, err := Open(path, Creds{SSHPrivateKey: []byte(readFile(t, k.identity))}); err == nil {
+		t.Error("a passphrase-protected key without its passphrase must fail")
+	}
+	if _, err := Open(path, Creds{}); err == nil {
+		t.Error("no key at all must fail")
+	}
+}
+
+func TestVerify(t *testing.T) {
+	k := newKeyFiles(t, "")
+	path := vaultPath(t)
+	if _, err := Create(path, CreateOptions{Setup: vaultcrypto.Setup{Mode: vaultcrypto.Both, Password: pw, SSHPublicKey: readFile(t, k.pub)}, NoRecovery: true}); err != nil {
+		t.Fatal(err)
+	}
+	key := []byte(readFile(t, k.identity))
+	if err := Verify(path, Creds{Password: pw, SSHPrivateKey: key}); err != nil {
+		t.Errorf("right credentials: %v", err)
+	}
+	for name, c := range map[string]Creds{
+		"password only": {Password: pw},
+		"key only":      {SSHPrivateKey: key},
+		"wrong":         {Password: "nope", SSHPrivateKey: key},
+	} {
+		if err := Verify(path, c); err == nil || err.Error() != "unlock failed" {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	logs, err := Logs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var verify, failed int
+	for _, e := range logs {
+		switch e.Action {
+		case "verify":
+			verify++
+		case "verify_failed":
+			failed++
+		case "unlock", "unlock_failed":
+			t.Errorf("verification must not be logged as %s", e.Action)
+		}
+	}
+	if verify != 1 || failed != 3 {
+		t.Errorf("verify=%d failed=%d", verify, failed)
+	}
+}

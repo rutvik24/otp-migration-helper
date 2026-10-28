@@ -18,12 +18,17 @@ import (
 // ErrRecoveryFailed is the only error recovery ever reports.
 var ErrRecoveryFailed = errors.New("recovery failed")
 
-// Creds are the credentials offered when unlocking.
+// Creds are the credentials offered when unlocking. The SSH key is given as
+// text (SSHPrivateKey, for example uploaded in the browser) or as the path of a
+// key file on this machine (SSHIdentityPath); the text wins when both are set.
 type Creds struct {
 	Password        string
+	SSHPrivateKey   []byte
 	SSHIdentityPath string
 	SSHPassphrase   func() ([]byte, error)
 }
+
+func (c Creds) hasKey() bool { return len(c.SSHPrivateKey) > 0 || c.SSHIdentityPath != "" }
 
 type CreateOptions struct {
 	Setup              vaultcrypto.Setup
@@ -94,30 +99,54 @@ func Create(path string, o CreateOptions) (string, error) {
 // Unlock returns the data key and logs the outcome. Every failure to open the
 // vault with the given credentials returns the same error.
 func Unlock(s *store.Store, c Creds) ([]byte, error) {
+	return unlock(s, c, "unlock", "unlock_failed")
+}
+
+func unlock(s *store.Store, c Creds, okAction, failAction string) ([]byte, error) {
 	w, err := s.Wrapped()
 	if err != nil {
 		return nil, err
 	}
-	_, useKey := Needs(w.Mode, c.SSHIdentityPath != "")
+	_, useKey := Needs(w.Mode, c.hasKey())
 
 	u := vaultcrypto.Unlock{Password: c.Password, SSHPassphrase: c.SSHPassphrase}
 	if useKey {
-		if c.SSHIdentityPath == "" {
-			return nil, errors.New("this vault needs an SSH private key file")
+		switch {
+		case len(c.SSHPrivateKey) > 0:
+			u.SSHPrivateKey = c.SSHPrivateKey
+		case c.SSHIdentityPath != "":
+			if u.SSHPrivateKey, err = os.ReadFile(c.SSHIdentityPath); err != nil {
+				return nil, err
+			}
 		}
-		if u.SSHPrivateKey, err = os.ReadFile(c.SSHIdentityPath); err != nil {
-			return nil, err
-		}
+		// With no key at all, Unwrap fails like any wrong credential, so a
+		// missing key is logged and counted the same way.
 	}
 
 	key, err := vaultcrypto.Unwrap(w, u)
 	if err != nil {
-		if logErr := s.Log("unlock_failed", ""); logErr != nil {
+		if logErr := s.Log(failAction, ""); logErr != nil {
 			return nil, logErr
 		}
 		return nil, err
 	}
-	return key, s.Log("unlock", "")
+	return key, s.Log(okAction, "")
+}
+
+// Verify checks that the credentials open the vault without starting a
+// session, for confirming the user before a sensitive action. It is logged as
+// verify / verify_failed.
+func Verify(path string, c Creds) error {
+	s, err := store.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = s.Close() }()
+	key, err := unlock(s, c, "verify", "verify_failed")
+	for i := range key {
+		key[i] = 0
+	}
+	return err
 }
 
 // Session is an unlocked vault.
