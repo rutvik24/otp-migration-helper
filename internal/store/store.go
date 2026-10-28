@@ -178,6 +178,73 @@ func (s *Store) Accounts(key []byte) ([]Record, error) {
 	return recs, rows.Err()
 }
 
+// Rekey re-encrypts every account under newKey and stores w, all in one
+// transaction: either everything changes or nothing does.
+func (s *Store) Rekey(oldKey, newKey []byte, w vaultcrypto.Wrapped) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if err := rekeyRows(tx, oldKey, newKey); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	raw, err := json.Marshal(w)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE meta SET v = ? WHERE k = 'wrapped'`, raw); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+type reseal struct {
+	id          int64
+	fingerprint string
+	sealed      []byte
+}
+
+func rekeyRows(tx *sql.Tx, oldKey, newKey []byte) error {
+	rows, err := tx.Query(`SELECT id, issuer, name, secret FROM accounts`)
+	if err != nil {
+		return err
+	}
+	var updates []reseal
+	for rows.Next() {
+		var id int64
+		var a migration.Account
+		var sealed []byte
+		if err := rows.Scan(&id, &a.Issuer, &a.Name, &sealed); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if a.Secret, err = vaultcrypto.Open(oldKey, sealed); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("account %d: %w", id, err)
+		}
+		if sealed, err = vaultcrypto.Seal(newKey, a.Secret); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		updates = append(updates, reseal{id, fingerprint(newKey, a), sealed})
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, u := range updates {
+		if _, err := tx.Exec(`UPDATE accounts SET secret = ?, fingerprint = ? WHERE id = ?`, u.sealed, u.fingerprint, u.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) SetCounter(id int64, counter uint64) error {
 	_, err := s.db.Exec(`UPDATE accounts SET counter = ? WHERE id = ?`, int64(counter), id)
 	return err

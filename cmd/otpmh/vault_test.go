@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"errors"
 	"google.golang.org/protobuf/encoding/protowire"
@@ -357,5 +358,40 @@ func TestRecover_LogsNoSecrets(t *testing.T) {
 		if !strings.Contains(out, action) {
 			t.Errorf("log missing %q:\n%s", action, out)
 		}
+	}
+}
+
+func TestRecover_ReEncryptsRowsUnderNewKey(t *testing.T) {
+	path := vaultPath(t)
+	code := recoveryCodeIn(t, initPasswordVault(t, path))
+	scripted(t, pw)
+	runOK(t, "vault", "import", "--vault-path", path, testLink("alice"))
+
+	scripted(t, pw)
+	s, oldKey, err := openVault(&vaultFlags{path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	scripted(t, code, recPass, "new password", "new password", "new-recovery-pass-2", "new-recovery-pass-2")
+	runOK(t, "vault", "recover", "--unlock", "password", "--vault-path", path)
+
+	scripted(t, "new password")
+	s, newKey, err := openVault(&vaultFlags{path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	if bytes.Equal(oldKey, newKey) {
+		t.Error("data key was not rotated")
+	}
+	if _, err := s.Accounts(oldKey); err == nil {
+		t.Error("old data key still decrypts the rows")
+	}
+	if recs, err := s.Accounts(newKey); err != nil || len(recs) != 1 {
+		t.Errorf("recs=%v err=%v", recs, err)
 	}
 }

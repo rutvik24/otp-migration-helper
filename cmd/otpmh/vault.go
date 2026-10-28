@@ -475,7 +475,7 @@ func runVaultRecover(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	dataKey, err := vaultcrypto.UnwrapRecovery(wrapped, code, pass)
+	oldKey, err := vaultcrypto.UnwrapRecovery(wrapped, code, pass)
 	if err != nil {
 		if err := s.RecordRecoveryFailure(time.Now()); err != nil {
 			return err
@@ -490,15 +490,20 @@ func runVaultRecover(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	rewrapped, err := vaultcrypto.Wrap(dataKey, setup)
+	// A fresh data key means nothing sealed under the old one stays readable.
+	newKey, err := vaultcrypto.NewDataKey()
 	if err != nil {
 		return err
 	}
-	newCode, err := addRecovery(&rewrapped, dataKey)
+	rewrapped, err := vaultcrypto.Wrap(newKey, setup)
 	if err != nil {
 		return err
 	}
-	if err := s.SetWrapped(rewrapped); err != nil {
+	newCode, err := addRecovery(&rewrapped, newKey)
+	if err != nil {
+		return err
+	}
+	if err := s.Rekey(oldKey, newKey, rewrapped); err != nil {
 		return err
 	}
 	if err := s.ClearRecoveryFailures(); err != nil {

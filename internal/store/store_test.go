@@ -168,3 +168,50 @@ func TestRecoveryLockout(t *testing.T) {
 		t.Errorf("not cleared: %d %v", f, locked)
 	}
 }
+
+func TestRekey_OldKeyFailsNewKeyWorks(t *testing.T) {
+	s, _, oldKey := newStore(t)
+	if _, err := s.AddAccounts(oldKey, []migration.Account{account("a")}); err != nil {
+		t.Fatal(err)
+	}
+	newKey, err := vaultcrypto.NewDataKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := vaultcrypto.Wrapped{Mode: vaultcrypto.SSH, SSH: []byte("rewrapped")}
+	if err := s.Rekey(oldKey, newKey, w); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Accounts(oldKey); err == nil {
+		t.Error("old key still decrypts rows")
+	}
+	recs, err := s.Accounts(newKey)
+	if err != nil || len(recs) != 1 || !bytes.Equal(recs[0].Secret, secret) {
+		t.Fatalf("recs=%+v err=%v", recs, err)
+	}
+	if got, _ := s.Wrapped(); got.Mode != vaultcrypto.SSH {
+		t.Errorf("wrapped not updated: %+v", got)
+	}
+	if n, err := s.AddAccounts(newKey, []migration.Account{account("a")}); err != nil || n != 0 {
+		t.Errorf("dedupe broken after rekey: n=%d err=%v", n, err)
+	}
+}
+
+func TestRekey_WrongOldKeyChangesNothing(t *testing.T) {
+	s, _, key := newStore(t)
+	if _, err := s.AddAccounts(key, []migration.Account{account("a")}); err != nil {
+		t.Fatal(err)
+	}
+	wrong, _ := vaultcrypto.NewDataKey()
+	fresh, _ := vaultcrypto.NewDataKey()
+	if err := s.Rekey(wrong, fresh, vaultcrypto.Wrapped{Mode: vaultcrypto.SSH}); err == nil {
+		t.Fatal("expected error")
+	}
+	if _, err := s.Accounts(key); err != nil {
+		t.Errorf("rows changed after failed rekey: %v", err)
+	}
+	if got, _ := s.Wrapped(); got.Mode != vaultcrypto.Password {
+		t.Errorf("wrapped changed after failed rekey: %+v", got)
+	}
+}
